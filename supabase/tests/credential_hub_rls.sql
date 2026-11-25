@@ -202,6 +202,17 @@ select ok(
     'authenticated clients cannot directly access recipient management tokens or sessions'
 );
 select ok(
+    not has_table_privilege('authenticated', 'private.credential_name_consent_events', 'SELECT')
+    and not has_table_privilege('authenticated', 'private.credential_name_consent_events', 'INSERT')
+    and not has_table_privilege('authenticated', 'private.credential_name_consent_events', 'UPDATE')
+    and not has_table_privilege('authenticated', 'private.credential_name_consent_events', 'DELETE')
+    and not has_table_privilege('service_role', 'private.credential_name_consent_events', 'SELECT')
+    and not has_table_privilege('service_role', 'private.credential_name_consent_events', 'INSERT')
+    and not has_table_privilege('service_role', 'private.credential_name_consent_events', 'UPDATE')
+    and not has_table_privilege('service_role', 'private.credential_name_consent_events', 'DELETE'),
+    'ordinary users and service_role cannot directly access consent events'
+);
+select ok(
     not has_table_privilege('authenticated', 'public.issuance_rows', 'UPDATE')
     and not has_table_privilege('authenticated', 'public.credentials', 'UPDATE')
     and not has_table_privilege('authenticated', 'public.status_lists', 'UPDATE')
@@ -365,7 +376,7 @@ select throws_ok(
         '70000000-0000-0000-0000-000000000001',
         2, '{"email":"viewer@test.invalid"}'::jsonb, 'viewer-row-unique',
         'Viewer Recipient', 'viewer@test.invalid', 'hash-viewer', 'salt-viewer',
-        false, 'skip', '81000000-0000-0000-0000-000000000002',
+        'skip', '81000000-0000-0000-0000-000000000002',
         now(), null, 'unlisted', '{}'::jsonb,
         'viewer-test-jws', 'key-a', 'hash-viewer-content', null
     )$$,
@@ -428,7 +439,7 @@ select lives_ok(
         '10000000-0000-0000-0000-000000000003',
         (select id from public.issuance_batches where organization_id = '20000000-0000-0000-0000-000000000001' and created_by = '10000000-0000-0000-0000-000000000003' order by created_at desc limit 1),
         1, '{"email":"new@test.invalid"}'::jsonb, 'issuer-row-unique',
-        'New Recipient', 'new@test.invalid', 'hash-new', 'salt-new', false, 'skip',
+        'New Recipient', 'new@test.invalid', 'hash-new', 'salt-new', 'skip',
         '81000000-0000-0000-0000-000000000001', now(), null,
         'unlisted', '{}'::jsonb, 'issuer-test-jws', 'key-a', 'hash-content', null
     )$$,
@@ -456,6 +467,12 @@ select throws_ok(
     $$select public.set_credential_visibility('80000000-0000-0000-0000-000000000001', 'public')$$,
     'P0001', 'Insufficient organization role', 'issuer cannot change credential visibility'
 );
+select throws_ok(
+    $$select public.record_recipient_credential_name_consent(
+      repeat('0', 64), true, false, 'issuer-attempt'
+    )$$,
+    '42501', null, 'issuer cannot grant recipient name consent'
+);
 reset role;
 set local role service_role;
 select throws_ok(
@@ -464,7 +481,7 @@ select throws_ok(
         '70000000-0000-0000-0000-000000000001',
         2, '{"email":"viewer@test.invalid"}'::jsonb, 'viewer-service-row',
         'Viewer Recipient', 'viewer@test.invalid', 'hash-viewer', 'salt-viewer',
-        false, 'skip', '81000000-0000-0000-0000-000000000003',
+        'skip', '81000000-0000-0000-0000-000000000003',
         now(), null, 'unlisted', '{}'::jsonb,
         'viewer-test-jws', 'key-a', 'hash-viewer-content', null
     )$$,
@@ -482,6 +499,12 @@ select lives_ok(
 select lives_ok(
     $$select public.revoke_credential('80000000-0000-0000-0000-000000000001', 'admin test revocation')$$,
     'admin can revoke credentials'
+);
+select throws_ok(
+    $$select public.record_recipient_credential_name_consent(
+      repeat('0', 64), true, false, 'admin-attempt'
+    )$$,
+    '42501', null, 'admin cannot grant recipient name consent'
 );
 select is(
     (select visibility::text from public.credentials where id = '80000000-0000-0000-0000-000000000001'),
@@ -589,6 +612,21 @@ select ok(
     ),
     'anon cannot execute SECURITY DEFINER functions'
 );
+set local role anon;
+set local request.jwt.claim.role = 'anon';
+set local request.jwt.claims = '{"role":"anon"}';
+select throws_ok(
+    $$select * from private.credential_name_consent_events$$,
+    '42501', null, 'anon cannot read recipient name-consent events'
+);
+select throws_ok(
+    $$select public.record_recipient_credential_name_consent(
+      repeat('0', 64), true, false, 'anon-attempt'
+    )$$,
+    '42501', null, 'anon cannot execute recipient name-consent RPC'
+);
+reset role;
+set local request.jwt.claim.role = 'authenticated';
 
 -- Every SECURITY DEFINER function has a pinned search_path.
 select ok(
@@ -977,6 +1015,17 @@ select throws_ok(
     '23503', null, 'email event cannot reference another tenant credential'
 );
 select throws_ok(
+    $$insert into private.credential_name_consent_events(
+        organization_id, credential_id, recipient_id, scope, event_type, notice_version
+      ) values (
+        '20000000-0000-0000-0000-000000000001',
+        '80000000-0000-0000-0000-000000000001',
+        '60000000-0000-0000-0000-000000000002',
+        'masked', 'granted', 'cross-tenant-test'
+      )$$,
+    '23503', null, 'consent events cannot reference another tenant recipient'
+);
+select throws_ok(
     $$insert into public.verification_events(organization_id, credential_id, method, result)
       values ('20000000-0000-0000-0000-000000000001', '80000000-0000-0000-0000-000000000002', 'id', 'valid')$$,
     '23503', null, 'verification event cannot reference another tenant credential'
@@ -993,6 +1042,53 @@ select lives_ok(
     $$select public.redeem_recipient_access_token(repeat('f', 64), repeat('0', 64))$$,
     'recipient management link can be redeemed before anonymization'
 );
+select is(
+    public.record_recipient_credential_name_consent(
+      repeat('0', 64), true, false, 'consent-test-v1'
+    )->>'maskedNameConsent',
+    'true',
+    'recipient session can grant masked-name consent'
+);
+select is(
+    public.record_recipient_credential_name_consent(
+      repeat('0', 64), false, false, 'consent-test-v1'
+    )->>'maskedNameConsent',
+    'false',
+    'recipient session can withdraw masked-name consent'
+);
+select is(
+    public.record_recipient_credential_name_consent(
+      repeat('0', 64), true, false, 'consent-test-v2'
+    )->>'maskedNameConsent',
+    'true',
+    'recipient session can grant masked-name consent again'
+);
+select is(
+    (select string_agg(event_type, ',' order by event_id)
+     from private.credential_name_consent_events
+     where credential_id = '81000000-0000-0000-0000-000000000001'
+       and scope = 'masked'),
+    'granted,withdrawn,granted',
+    'consent projection follows grant, withdrawal, and re-grant order'
+);
+select ok(
+    (select bool_and(occurred_at is not null and length(notice_version) > 0)
+     from private.credential_name_consent_events
+     where credential_id = '81000000-0000-0000-0000-000000000001'),
+    'every consent event records a timestamp and notice version'
+);
+select lives_ok(
+    $$select public.record_recipient_credential_name_consent(
+      repeat('0', 64), true, true, 'consent-test-v2'
+    )$$,
+    'masked and full name consents are independently grantable'
+);
+select lives_ok(
+    $$select public.record_recipient_credential_name_consent(
+      repeat('0', 64), true, false, 'consent-test-v2'
+    )$$,
+    'full name consent can be withdrawn independently'
+);
 reset role;
 
 set local role authenticated;
@@ -1003,10 +1099,10 @@ select lives_ok(
 );
 select ok(
     (select full_name is null and email is null and email_hash is null and salt is null
-        and not public_name_consent and anonymized_at is not null
+        and anonymized_at is not null
      from public.recipients
      where id = (select recipient_id from public.credentials where id = '81000000-0000-0000-0000-000000000001')),
-    'anonymization removes recipient identifiers and consent'
+    'anonymization removes recipient identifiers'
 );
 select ok(
     (select status = 'revoked' and credential_json is null and jws is null
@@ -1031,6 +1127,26 @@ select ok(
 select ok(
     (select payload = '{"redacted": true}'::jsonb from public.email_events where credential_id = '81000000-0000-0000-0000-000000000001'),
     'anonymization redacts email-event payloads while retaining their audit row'
+);
+reset role;
+set local role postgres;
+select is(
+    public.get_credential_name_consent('81000000-0000-0000-0000-000000000001')->>'maskedNameConsent',
+    'false',
+    'anonymization withdraws masked-name consent'
+);
+select is(
+    public.get_credential_name_consent('81000000-0000-0000-0000-000000000001')->>'fullNameConsent',
+    'false',
+    'anonymization withdraws full-name consent'
+);
+select is(
+    (select count(*)::int from private.credential_name_consent_events
+     where credential_id = '81000000-0000-0000-0000-000000000001'
+       and event_type = 'withdrawn'
+       and notice_version = 'system-anonymization-v1'),
+    1,
+    'anonymization records a versioned consent withdrawal'
 );
 reset role;
 select is(

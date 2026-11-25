@@ -641,7 +641,7 @@ export default function Admin({ session, onSignOut }: { session: Session; onSign
         {canIssue && (
           <section className="admin-card issuance-card">
             <span className="eyebrow">BULK ISSUANCE</span><h2>Issue credentials from CSV</h2>
-            <p>Required columns: <code>full_name,email</code>. Optional: <code>issued_on,expires_on,public_name_consent</code>. Rows are processed in server-side chunks of 50.</p>
+            <p>Required columns: <code>full_name,email</code>. Optional: <code>issued_on,expires_on</code>. Recipient name-display consent is collected separately through the recipient management link. Rows are processed in server-side chunks of 50.</p>
             <div className="issuance-controls">
               <label>Event<select value={selectedEvent} onChange={(event) => setSelectedEvent(event.target.value)} required><option value="">Choose event</option>{events.map((item) => <option value={item.id} key={item.id}>{item.name}</option>)}</select></label>
               <label>Achievement<select value={selectedAchievement} onChange={(event) => setSelectedAchievement(event.target.value)} required><option value="">Choose achievement</option>{achievements.map((item) => <option value={item.id} key={item.id}>{item.name}</option>)}</select></label>

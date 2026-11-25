@@ -153,7 +153,6 @@ create table public.recipients (
     email text,
     email_hash text,
     salt text,
-    public_name_consent boolean not null default false,
     external_id text,
     anonymized_at timestamptz,
     created_at timestamptz not null default now(),
@@ -367,6 +366,32 @@ create table public.recipient_management_sessions (
 
 create index recipient_management_sessions_credential_idx
     on public.recipient_management_sessions(organization_id, credential_id, created_at desc);
+
+create table private.credential_name_consent_events (
+    event_id bigint generated always as identity primary key,
+    organization_id uuid not null,
+    credential_id uuid not null,
+    recipient_id uuid not null,
+    scope text not null check (scope in ('masked', 'full')),
+    event_type text not null check (event_type in ('granted', 'withdrawn')),
+    notice_version text not null check (length(trim(notice_version)) between 1 and 64),
+    occurred_at timestamptz not null default clock_timestamp(),
+    foreign key (organization_id, credential_id)
+        references public.credentials(organization_id, id)
+        on delete cascade,
+    foreign key (organization_id, recipient_id)
+        references public.recipients(organization_id, id)
+        on delete cascade
+);
+
+create index credential_name_consent_events_latest_idx
+    on private.credential_name_consent_events(
+        organization_id, credential_id, scope, event_id desc
+    );
+
+alter table private.credential_name_consent_events enable row level security;
+revoke all on private.credential_name_consent_events
+    from public, anon, authenticated, service_role;
 
 create table public.verification_events (
     id uuid primary key default gen_random_uuid(),
@@ -804,6 +829,8 @@ declare
     v_visibility public.credential_visibility;
     v_issued_at timestamptz;
     v_achievement_name text;
+    v_masked_name_consent boolean;
+    v_full_name_consent boolean;
 begin
     if auth.role() is distinct from 'service_role' then
         raise exception 'Service role required' using errcode = '42501';
@@ -869,12 +896,36 @@ begin
         v_token.credential_id, jsonb_build_object('method', 'email_link')
     );
 
+    select coalesce((
+        select e.event_type = 'granted'
+        from private.credential_name_consent_events e
+        where e.organization_id = v_token.organization_id
+          and e.credential_id = v_token.credential_id
+          and e.scope = 'masked'
+        order by e.event_id desc
+        limit 1
+    ), false)
+    into v_masked_name_consent;
+
+    select coalesce((
+        select e.event_type = 'granted'
+        from private.credential_name_consent_events e
+        where e.organization_id = v_token.organization_id
+          and e.credential_id = v_token.credential_id
+          and e.scope = 'full'
+        order by e.event_id desc
+        limit 1
+    ), false)
+    into v_full_name_consent;
+
     return jsonb_build_object(
         'credentialId', v_token.credential_id,
         'serialNumber', v_serial_number,
         'visibility', v_visibility,
         'issuedAt', v_issued_at,
-        'achievementName', v_achievement_name
+        'achievementName', v_achievement_name,
+        'maskedNameConsent', v_masked_name_consent,
+        'fullNameConsent', v_full_name_consent
     );
 end;
 $$;
@@ -948,6 +999,191 @@ $$;
 revoke all on function public.set_recipient_credential_visibility(text, public.credential_visibility)
     from public, anon, authenticated;
 grant execute on function public.set_recipient_credential_visibility(text, public.credential_visibility)
+    to service_role;
+
+create or replace function public.record_recipient_credential_name_consent(
+    p_session_hash text,
+    p_masked_granted boolean,
+    p_full_granted boolean,
+    p_notice_version text
+)
+returns jsonb language plpgsql security definer set search_path = ''
+as $$
+declare
+    v_organization_id uuid;
+    v_credential_id uuid;
+    v_recipient_id uuid;
+    v_scope text;
+    v_requested boolean;
+    v_current boolean;
+begin
+    if auth.role() is distinct from 'service_role' then
+        raise exception 'Service role required' using errcode = '42501';
+    end if;
+    if p_session_hash is null or p_session_hash !~ '^[0-9a-f]{64}$'
+       or p_masked_granted is null or p_full_granted is null
+       or p_notice_version is null
+       or length(trim(p_notice_version)) not between 1 and 64 then
+        raise exception 'Invalid recipient name consent request' using errcode = '22023';
+    end if;
+
+    select s.organization_id, s.credential_id, s.recipient_id
+    into v_organization_id, v_credential_id, v_recipient_id
+    from public.recipient_management_sessions s
+    join public.credentials c
+      on c.organization_id = s.organization_id
+     and c.id = s.credential_id
+     and c.recipient_id = s.recipient_id
+    join public.recipients r
+      on r.organization_id = s.organization_id
+     and r.id = s.recipient_id
+    where s.token_hash = p_session_hash
+      and s.expires_at > now()
+      and s.revoked_at is null
+      and s.recipient_identity_hash = r.email_hash
+      and r.email is not null
+      and r.anonymized_at is null
+      and c.status = 'issued'
+    for update of s;
+
+    if not found then
+        raise exception 'Recipient management session is invalid or expired';
+    end if;
+
+    foreach v_scope in array array['masked', 'full'] loop
+        v_requested := case v_scope
+            when 'masked' then p_masked_granted
+            else p_full_granted
+        end;
+
+        select coalesce((
+            select e.event_type = 'granted'
+            from private.credential_name_consent_events e
+            where e.organization_id = v_organization_id
+              and e.credential_id = v_credential_id
+              and e.scope = v_scope
+            order by e.event_id desc
+            limit 1
+        ), false)
+        into v_current;
+
+        if v_requested is distinct from v_current then
+            insert into private.credential_name_consent_events(
+                organization_id, credential_id, recipient_id,
+                scope, event_type, notice_version
+            )
+            values (
+                v_organization_id, v_credential_id, v_recipient_id,
+                v_scope, case when v_requested then 'granted' else 'withdrawn' end,
+                trim(p_notice_version)
+            );
+
+            insert into public.audit_logs(
+                organization_id, action, entity_type, entity_id, metadata
+            )
+            values (
+                v_organization_id,
+                case when v_requested
+                    then 'recipient.name_consent.granted'
+                    else 'recipient.name_consent.withdrawn'
+                end,
+                'credential',
+                v_credential_id,
+                jsonb_build_object(
+                    'scope', v_scope,
+                    'noticeVersion', trim(p_notice_version),
+                    'method', 'recipient_management_session'
+                )
+            );
+        end if;
+    end loop;
+
+    return jsonb_build_object(
+        'credentialId', v_credential_id,
+        'maskedNameConsent', p_masked_granted,
+        'fullNameConsent', p_full_granted
+    );
+end;
+$$;
+
+revoke all on function public.record_recipient_credential_name_consent(
+    text, boolean, boolean, text
+) from public, anon, authenticated;
+grant execute on function public.record_recipient_credential_name_consent(
+    text, boolean, boolean, text
+) to service_role;
+
+create or replace function public.get_credential_name_consent(p_credential_id uuid)
+returns jsonb language plpgsql security definer set search_path = ''
+as $$
+declare
+    v_full_name text;
+    v_masked_granted boolean;
+    v_full_granted boolean;
+begin
+    if auth.role() is distinct from 'service_role' then
+        raise exception 'Service role required' using errcode = '42501';
+    end if;
+    if p_credential_id is null then
+        raise exception 'Credential ID is required' using errcode = '22023';
+    end if;
+
+    select r.full_name
+    into v_full_name
+    from public.credentials c
+    join public.recipients r
+      on r.organization_id = c.organization_id
+     and r.id = c.recipient_id
+    where c.id = p_credential_id
+      and c.status = 'issued'
+      and c.visibility in ('public', 'unlisted')
+      and r.anonymized_at is null;
+
+    if not found then
+        return jsonb_build_object(
+            'fullName', null,
+            'maskedNameConsent', false,
+            'fullNameConsent', false
+        );
+    end if;
+
+    select coalesce((
+        select e.event_type = 'granted'
+        from private.credential_name_consent_events e
+        join public.credentials c
+          on c.organization_id = e.organization_id
+         and c.id = e.credential_id
+        where c.id = p_credential_id
+          and e.scope = 'masked'
+        order by e.event_id desc
+        limit 1
+    ), false)
+    into v_masked_granted;
+
+    select coalesce((
+        select e.event_type = 'granted'
+        from private.credential_name_consent_events e
+        join public.credentials c
+          on c.organization_id = e.organization_id
+         and c.id = e.credential_id
+        where c.id = p_credential_id
+          and e.scope = 'full'
+        order by e.event_id desc
+        limit 1
+    ), false)
+    into v_full_granted;
+
+    return jsonb_build_object(
+        'fullName', v_full_name,
+        'maskedNameConsent', v_masked_granted,
+        'fullNameConsent', v_full_granted
+    );
+end;
+$$;
+
+revoke all on function public.get_credential_name_consent(uuid)
+    from public, anon, authenticated;
+grant execute on function public.get_credential_name_consent(uuid)
     to service_role;
 
 create or replace function public.add_organization_member_by_email(
@@ -1037,7 +1273,6 @@ create or replace function public.persist_issuance_row(
     p_email text,
     p_email_hash text,
     p_salt text,
-    p_public_name_consent boolean,
     p_duplicate_policy text,
     p_credential_id uuid,
     p_issued_at timestamptz,
@@ -1106,11 +1341,11 @@ begin
 
     if v_recipient_id is null then
         insert into public.recipients(
-            organization_id, full_name, email, email_hash, salt, public_name_consent
+            organization_id, full_name, email, email_hash, salt
         )
         values (
             v_org_id, v_normalized_name, v_normalized_email,
-            p_email_hash, p_salt, coalesce(p_public_name_consent, false)
+            p_email_hash, p_salt
         )
         returning id into v_recipient_id;
     end if;
@@ -1213,12 +1448,12 @@ end;
 $$;
 
 revoke all on function public.persist_issuance_row(
-    uuid, uuid, integer, jsonb, text, text, text, text, text, boolean, text,
+    uuid, uuid, integer, jsonb, text, text, text, text, text, text,
     uuid, timestamptz, timestamptz, public.credential_visibility,
     jsonb, text, text, text, text
 ) from public, anon, authenticated;
 grant execute on function public.persist_issuance_row(
-    uuid, uuid, integer, jsonb, text, text, text, text, text, boolean, text,
+    uuid, uuid, integer, jsonb, text, text, text, text, text, text,
     uuid, timestamptz, timestamptz, public.credential_visibility,
     jsonb, text, text, text, text
 ) to service_role;
@@ -1419,6 +1654,22 @@ begin
     end if;
     if v_anonymized_at is not null then return; end if;
 
+    insert into private.credential_name_consent_events(
+        organization_id, credential_id, recipient_id,
+        scope, event_type, notice_version
+    )
+    select v_org_id, latest.credential_id, p_recipient_id,
+           latest.scope, 'withdrawn', 'system-anonymization-v1'
+    from (
+        select distinct on (e.credential_id, e.scope)
+            e.credential_id, e.scope, e.event_type
+        from private.credential_name_consent_events e
+        where e.organization_id = v_org_id
+          and e.recipient_id = p_recipient_id
+        order by e.credential_id, e.scope, e.event_id desc
+    ) latest
+    where latest.event_type = 'granted';
+
     insert into public.revocations(organization_id, credential_id, reason, revoked_by)
     select v_org_id, c.id, 'Recipient data anonymized', auth.uid()
     from public.credentials c
@@ -1476,7 +1727,7 @@ begin
 
     update public.recipients
     set full_name = null, email = null, email_hash = null, salt = null,
-        public_name_consent = false, anonymized_at = now()
+        anonymized_at = now()
     where id = p_recipient_id;
 
     insert into public.audit_logs(

@@ -566,6 +566,8 @@ type RecipientManagedCredential = {
   visibility: 'public' | 'unlisted'
   issuedAt: string | null
   achievementName: string | null
+  maskedNameConsent: boolean
+  fullNameConsent: boolean
 }
 
 function RecipientManagementPage() {
@@ -579,6 +581,8 @@ function RecipientManagementPage() {
   const [sessionToken, setSessionToken] = useState('')
   const [credential, setCredential] = useState<RecipientManagedCredential | null>(null)
   const [visibility, setVisibility] = useState<'public' | 'unlisted'>('unlisted')
+  const [maskedNameConsent, setMaskedNameConsent] = useState(false)
+  const [fullNameConsent, setFullNameConsent] = useState(false)
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState(initialLink.error)
   const [message, setMessage] = useState('')
@@ -607,6 +611,8 @@ function RecipientManagementPage() {
       setSessionToken(data.sessionToken)
       setCredential(data.credential)
       setVisibility(data.credential.visibility)
+      setMaskedNameConsent(data.credential.maskedNameConsent)
+      setFullNameConsent(data.credential.fullNameConsent)
       setPendingToken('')
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : 'This management link is invalid or expired.')
@@ -637,6 +643,44 @@ function RecipientManagementPage() {
       setMessage(`Visibility updated to ${data.visibility}.`)
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : 'Could not update credential visibility.')
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  async function saveNameConsent(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault()
+    if (!supabase || !sessionToken || !credential) return
+    setBusy(true)
+    setError('')
+    setMessage('')
+    try {
+      const { data, error: invokeError } = await supabase.functions.invoke<{
+        credentialId: string
+        maskedNameConsent: boolean
+        fullNameConsent: boolean
+      }>('manage-recipient-credential', {
+        body: {
+          action: 'set-name-consent',
+          sessionToken,
+          maskedNameConsent,
+          fullNameConsent,
+        },
+      })
+      if (invokeError) throw invokeError
+      if (!data || data.credentialId !== credential.credentialId) {
+        throw new Error('The management service returned an invalid consent response.')
+      }
+      setCredential({
+        ...credential,
+        maskedNameConsent: data.maskedNameConsent,
+        fullNameConsent: data.fullNameConsent,
+      })
+      setMaskedNameConsent(data.maskedNameConsent)
+      setFullNameConsent(data.fullNameConsent)
+      setMessage('Name-display consent updated.')
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : 'Could not update name-display consent.')
     } finally {
       setBusy(false)
     }
@@ -675,10 +719,40 @@ function RecipientManagementPage() {
                 <option value="unlisted">Unlisted — accessible by link or QR</option>
                 <option value="public">Public — may appear in public listings</option>
               </select>
-              <p>Your name is shown publicly only if you previously consented to name display.</p>
+              <p>Name display is hidden unless you choose otherwise below. Anyone with the credential link or QR may see a name you consent to display. Withdrawal cannot remove screenshots or copies retained by third-party services.</p>
               {message && <p role="status">{message}</p>}
               <button className="button button-primary" disabled={busy || visibility === credential.visibility}>
                 {busy ? 'Saving…' : 'Save visibility'}
+              </button>
+            </form>
+            <form className="admin-form" onSubmit={(event) => void saveNameConsent(event)}>
+              <label>
+                <input
+                  type="checkbox"
+                  checked={maskedNameConsent}
+                  disabled={busy}
+                  onChange={(event) => setMaskedNameConsent(event.target.checked)}
+                />
+                Allow a masked name on the public credential page
+              </label>
+              <p>For longer names, the first word is shown and later words are reduced to an initial plus three stars (for example, “Ahmad R*** S***”). Single-word or very short names are shown as initials only.</p>
+              <label>
+                <input
+                  type="checkbox"
+                  checked={fullNameConsent}
+                  disabled={busy}
+                  onChange={(event) => setFullNameConsent(event.target.checked)}
+                />
+                Separately allow my full name on the public credential page
+              </label>
+              <button
+                className="button button-secondary"
+                disabled={busy || (
+                  maskedNameConsent === credential.maskedNameConsent
+                  && fullNameConsent === credential.fullNameConsent
+                )}
+              >
+                {busy ? 'Saving…' : 'Save name-display choices'}
               </button>
             </form>
           </div>

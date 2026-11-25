@@ -7,12 +7,22 @@ import {
   RequestBodyError,
 } from "../_shared/http.ts";
 import { getAdminClient } from "../_shared/supabase.ts";
-import { consentedRecipientName } from "../_shared/credential.ts";
+import { maskRecipientName } from "../_shared/credential.ts";
 
 const inputSchema = z.object({
   id: z.string().uuid(),
   format: z.enum(["json", "jwt"]).default("json"),
 }).strict();
+
+const nameConsentSchema = z.object({
+  fullName: z.string().nullable(),
+  maskedNameConsent: z.boolean(),
+  fullNameConsent: z.boolean(),
+}).strict();
+
+function publicJsonResponse(body: unknown, status = 200): Response {
+  return jsonResponse(body, status, { "Cache-Control": "no-store" });
+}
 
 Deno.serve(async (request) => {
   const options = handleOptions(request);
@@ -27,18 +37,18 @@ Deno.serve(async (request) => {
     const client = getAdminClient();
     const { data, error } = await client
       .from("credentials")
-      .select("id, organization_id, status, visibility, issued_at, expires_at, credential_json, jws, recipients(public_name_consent)")
+      .select("id, organization_id, status, visibility, issued_at, expires_at, credential_json, jws")
       .eq("id", input.id)
       .maybeSingle();
     if (error) throw new Error("Could not load credential");
-    if (!data || data.status === "draft") return jsonResponse({ error: "Credential not found" }, 404);
+    if (!data || data.status === "draft") return publicJsonResponse({ error: "Credential not found" }, 404);
     if (data.visibility !== "public" && data.visibility !== "unlisted") {
-      return jsonResponse({ error: "Credential not found" }, 404);
+      return publicJsonResponse({ error: "Credential not found" }, 404);
     }
 
     const storedCredential = data.credential_json as Record<string, unknown> | null;
     if (!storedCredential && data.status === "revoked") {
-      return jsonResponse({
+      return publicJsonResponse({
         revoked: true,
         credential: {
           id: `https://tasdiqapp.com/credentials/${data.id}`,
@@ -48,7 +58,7 @@ Deno.serve(async (request) => {
     }
 
     if (input.format === "jwt") {
-      if (!data.jws) return jsonResponse({ error: "Credential JWT is unavailable" }, 404);
+      if (!data.jws) return publicJsonResponse({ error: "Credential JWT is unavailable" }, 404);
       return new Response(data.jws, {
         headers: {
           "Access-Control-Allow-Origin": "*",
@@ -58,16 +68,22 @@ Deno.serve(async (request) => {
       });
     }
 
-    if (!storedCredential) return jsonResponse({ error: "Credential data is unavailable" }, 404);
+    if (!storedCredential) return publicJsonResponse({ error: "Credential data is unavailable" }, 404);
     const storedSubject = storedCredential.credentialSubject as Record<string, unknown> | undefined;
-    const recipient = Array.isArray(data.recipients) ? data.recipients[0] : data.recipients;
     const identifier = storedSubject?.identifier;
     const identity = Array.isArray(identifier) ? identifier[0] : identifier;
     const achievement = storedSubject?.achievement as Record<string, unknown> | undefined;
-    const publicName = consentedRecipientName(
-      storedSubject?.name,
-      recipient?.public_name_consent === true,
+    const { data: nameConsentData, error: nameConsentError } = await client.rpc(
+      "get_credential_name_consent",
+      { p_credential_id: input.id },
     );
+    if (nameConsentError) throw new Error("Could not load recipient name consent");
+    const nameConsent = nameConsentSchema.parse(nameConsentData);
+    const publicName = nameConsent.fullNameConsent
+      ? nameConsent.fullName?.trim() || undefined
+      : nameConsent.maskedNameConsent && nameConsent.fullName
+      ? maskRecipientName(nameConsent.fullName)
+      : undefined;
     const publicSubject = {
       ...(storedSubject?.type ? { type: storedSubject.type } : {}),
       ...(identity && typeof identity === "object"
@@ -90,7 +106,7 @@ Deno.serve(async (request) => {
         .map((key) => [key, storedCredential[key]]),
     );
     credential.credentialSubject = publicSubject;
-    return jsonResponse({ credential });
+    return publicJsonResponse({ credential });
   } catch (error) {
     if (error instanceof RequestBodyError) {
       return jsonResponse({ error: error.message }, error.status);

@@ -27,7 +27,9 @@ async function getPublicMetadata(id: string): Promise<{ title: string; descripti
         apikey: anonKey,
         authorization: `Bearer ${anonKey}`,
         'content-type': 'application/json',
+        'cache-control': 'no-cache',
       },
+      cache: 'no-store',
       body: JSON.stringify({ id, format: 'json' }),
     })
     if (!response.ok) return { title: fallbackTitle, description: fallbackDescription }
@@ -35,12 +37,16 @@ async function getPublicMetadata(id: string): Promise<{ title: string; descripti
     const result = await response.json() as {
       credential?: {
         issuer?: string | { name?: string }
-        credentialSubject?: { achievement?: { name?: string; description?: string; image?: string } }
+        credentialSubject?: {
+          name?: string
+          achievement?: { name?: string; description?: string; image?: string }
+        }
       }
     }
     const achievement = result.credential?.credentialSubject?.achievement
     if (!achievement?.name) return { title: fallbackTitle, description: fallbackDescription }
 
+    const recipientName = result.credential?.credentialSubject?.name
     const issuer = typeof result.credential?.issuer === 'string'
       ? result.credential.issuer
       : result.credential?.issuer?.name
@@ -49,7 +55,10 @@ async function getPublicMetadata(id: string): Promise<{ title: string; descripti
       : undefined
     return {
       title: (issuer ? `${achievement.name} | ${issuer}` : achievement.name).slice(0, 180),
-      description: (achievement.description ?? fallbackDescription).slice(0, 300),
+      description: [
+        achievement.description ?? fallbackDescription,
+        ...(recipientName ? [`Awarded to ${recipientName}`] : []),
+      ].join(' · ').slice(0, 300),
       ...(image ? { image } : {}),
     }
   } catch (error) {
@@ -93,6 +102,6 @@ export default async function middleware(request: Request): Promise<Response> {
 
   const headers = new Headers(appResponse.headers)
   headers.set('content-type', 'text/html; charset=utf-8')
-  headers.set('cache-control', 'public, max-age=0, s-maxage=300, stale-while-revalidate=3600')
+  headers.set('cache-control', 'public, max-age=0, s-maxage=30')
   return new Response(html, { status: appResponse.status, headers })
 }

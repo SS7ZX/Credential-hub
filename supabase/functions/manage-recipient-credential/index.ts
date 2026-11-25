@@ -19,7 +19,15 @@ const requestSchema = z.discriminatedUnion("action", [
     sessionToken: z.string().regex(/^[0-9a-f]{64}$/),
     visibility: z.enum(["public", "unlisted"]),
   }).strict(),
+  z.object({
+    action: z.literal("set-name-consent"),
+    sessionToken: z.string().regex(/^[0-9a-f]{64}$/),
+    maskedNameConsent: z.boolean(),
+    fullNameConsent: z.boolean(),
+  }).strict(),
 ]);
+
+const NAME_CONSENT_NOTICE_VERSION = "2026-11-26-v1";
 
 const redemptionResultSchema = z.object({
   credentialId: z.string().uuid(),
@@ -27,12 +35,20 @@ const redemptionResultSchema = z.object({
   visibility: z.enum(["public", "unlisted"]),
   issuedAt: z.string().nullable(),
   achievementName: z.string().nullable(),
+  maskedNameConsent: z.boolean(),
+  fullNameConsent: z.boolean(),
 }).strict();
 
 const visibilityResultSchema = z.object({
   credentialId: z.string().uuid(),
   serialNumber: z.string().min(1),
   visibility: z.enum(["public", "unlisted"]),
+}).strict();
+
+const nameConsentResultSchema = z.object({
+  credentialId: z.string().uuid(),
+  maskedNameConsent: z.boolean(),
+  fullNameConsent: z.boolean(),
 }).strict();
 
 Deno.serve(async (request) => {
@@ -65,18 +81,35 @@ Deno.serve(async (request) => {
       return jsonResponse({ sessionToken, credential });
     }
 
-    const { data, error } = await admin.rpc("set_recipient_credential_visibility", {
+    if (input.action === "set-visibility") {
+      const { data, error } = await admin.rpc("set_recipient_credential_visibility", {
+        p_session_hash: await hashOpaqueToken(input.sessionToken),
+        p_visibility: input.visibility,
+      });
+      if (error) {
+        if (error.code === "P0001" || error.code === "22023") {
+          return jsonResponse({ error: "This management session has expired. Ask the issuer to resend your link." }, 401);
+        }
+        throw new Error("Could not update recipient credential visibility");
+      }
+
+      return jsonResponse(visibilityResultSchema.parse(data));
+    }
+
+    const { data, error } = await admin.rpc("record_recipient_credential_name_consent", {
       p_session_hash: await hashOpaqueToken(input.sessionToken),
-      p_visibility: input.visibility,
+      p_masked_granted: input.maskedNameConsent,
+      p_full_granted: input.fullNameConsent,
+      p_notice_version: NAME_CONSENT_NOTICE_VERSION,
     });
     if (error) {
       if (error.code === "P0001" || error.code === "22023") {
         return jsonResponse({ error: "This management session has expired. Ask the issuer to resend your link." }, 401);
       }
-      throw new Error("Could not update recipient credential visibility");
+      throw new Error("Could not update recipient name consent");
     }
 
-    return jsonResponse(visibilityResultSchema.parse(data));
+    return jsonResponse(nameConsentResultSchema.parse(data));
   } catch (error) {
     if (error instanceof RequestBodyError) {
       return jsonResponse({ error: error.message }, error.status);

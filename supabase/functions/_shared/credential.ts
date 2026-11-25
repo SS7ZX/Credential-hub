@@ -12,8 +12,6 @@ export const credentialInputSchema = z.object({
   issuerImage: z.url().optional(),
   validFrom: z.iso.datetime({ offset: true }),
   validUntil: z.iso.datetime({ offset: true }).optional(),
-  displayName: z.string().trim().min(1).max(200).optional(),
-  publicNameConsent: z.boolean().default(false),
   emailHash: z.string().regex(/^[a-f0-9]{64}$/i),
   salt: z.string().min(16).max(256),
   achievement: z.object({
@@ -47,13 +45,25 @@ export function validateCredential(value: unknown): asserts value is Record<stri
   }
 }
 
-export function consentedRecipientName(
-  signedName: unknown,
-  hasConsent: boolean,
-): string | undefined {
-  return hasConsent && typeof signedName === "string" && signedName.trim()
-    ? signedName
-    : undefined;
+export function maskRecipientName(fullName: string): string | undefined {
+  const normalized = fullName.normalize("NFC").trim().replace(/\s+/gu, " ");
+  if (!normalized) return undefined;
+
+  const words = normalized.split(" ");
+  const segmenter = new Intl.Segmenter(undefined, { granularity: "grapheme" });
+  const graphemes = words.map((word) =>
+    Array.from(segmenter.segment(word), (part) => part.segment)
+  );
+  const totalGraphemes = graphemes.reduce((total, word) => total + word.length, 0);
+
+  if (words.length === 1 || totalGraphemes <= 6) {
+    return graphemes.map((word) => `${word[0]}.`).join(" ");
+  }
+
+  return [
+    words[0],
+    ...graphemes.slice(1).map((word) => `${word[0]}***`),
+  ].join(" ");
 }
 
 export function buildCredential(input: CredentialInput): Record<string, unknown> {
@@ -75,10 +85,6 @@ export function buildCredential(input: CredentialInput): Record<string, unknown>
       ...(input.achievement.imageUrl ? { image: input.achievement.imageUrl } : {}),
     },
   };
-
-  if (input.publicNameConsent && input.displayName) {
-    subject.name = input.displayName;
-  }
 
   const credential = {
     "@context": [

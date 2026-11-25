@@ -17,10 +17,6 @@ const rowSchema = z.object({
   category: z.string().trim().max(100).optional(),
   issued_on: z.string().trim().optional(),
   expires_on: z.string().trim().optional(),
-  public_name_consent: z.preprocess((value) => {
-    if (typeof value !== "string") return value;
-    return ["true", "yes", "1"].includes(value.trim().toLowerCase());
-  }, z.boolean().optional()),
 }).strict();
 
 const createSchema = z.object({
@@ -205,8 +201,6 @@ async function processRows(request: Request, batchId: string, rows: RawRow[]) {
         ...(organization.logo_url ? { issuerImage: organization.logo_url } : {}),
         validFrom: issuedAt,
         ...(validUntil ? { validUntil } : {}),
-        displayName: input.full_name,
-        publicNameConsent: input.public_name_consent ?? false,
         emailHash,
         salt: emailSalt,
         achievement: {
@@ -229,7 +223,6 @@ async function processRows(request: Request, batchId: string, rows: RawRow[]) {
         p_email: input.email,
         p_email_hash: emailHash,
         p_salt: emailSalt,
-        p_public_name_consent: input.public_name_consent ?? false,
         p_duplicate_policy: (batch.options.duplicatePolicy ?? "skip") as string,
         p_credential_id: credentialId,
         p_issued_at: issuedAt,

@@ -1,18 +1,16 @@
 import {
   buildCredential,
-  consentedRecipientName,
   hashRecipientEmail,
+  maskRecipientName,
 } from "./credential.ts";
 
-Deno.test("buildCredential validates an Open Badges 3.0 credential and hides unconsented name", () => {
+Deno.test("buildCredential validates OB 3.0 and never includes recipient names", () => {
   const credential = buildCredential({
     id: "00000000-0000-4000-8000-000000000001",
     issuerDid: "did:web:tasdiqapp.com",
     issuerName: "Tasdiq",
     issuerUrl: "https://tasdiqapp.com",
     validFrom: "2026-11-25T00:00:00.000Z",
-    displayName: "Recipient Name",
-    publicNameConsent: false,
     emailHash: "a".repeat(64),
     salt: "random-salt-value",
     achievement: {
@@ -23,19 +21,47 @@ Deno.test("buildCredential validates an Open Badges 3.0 credential and hides unc
     },
   });
   const subject = credential.credentialSubject as Record<string, unknown>;
-  if ("name" in subject) throw new Error("Unconsented recipient name was included");
+  if ("name" in subject) throw new Error("Recipient name was included in the signed subject");
+  if (JSON.stringify(credential).includes("Recipient Name")) {
+    throw new Error("Recipient name appeared in the signed credential payload");
+  }
+  if (!("identifier" in subject)) throw new Error("Hashed email identity was omitted");
   if (!Array.isArray(credential["@context"])) throw new Error("Expected official OB contexts");
 });
 
-Deno.test("buildCredential includes the recipient name only after explicit consent", () => {
+Deno.test("maskRecipientName uses the documented long-name format", () => {
+  const masked = maskRecipientName("Ahmad Rafiq Satria");
+  if (masked !== "Ahmad R*** S***") {
+    throw new Error(`Unexpected masked name: ${masked}`);
+  }
+});
+
+Deno.test("maskRecipientName reveals initials only for short or single-word names", () => {
+  if (maskRecipientName("Ahmad") !== "A.") {
+    throw new Error("A single-word name must be reduced to an initial");
+  }
+  if (maskRecipientName("Li Wei") !== "L. W.") {
+    throw new Error("A very short name must be reduced to initials");
+  }
+  if (maskRecipientName("   ") !== undefined) {
+    throw new Error("An empty name must not produce a public value");
+  }
+});
+
+Deno.test("maskRecipientName preserves Unicode grapheme initials", () => {
+  const masked = maskRecipientName("A\u0301hmad Rafiq Satria");
+  if (masked !== "Áhmad R*** S***") {
+    throw new Error(`Unexpected Unicode masked name: ${masked}`);
+  }
+});
+
+Deno.test("buildCredential never includes a recipient name, independent of consent", () => {
   const credential = buildCredential({
     id: "00000000-0000-4000-8000-000000000003",
     issuerDid: "did:web:tasdiqapp.com",
     issuerName: "Tasdiq",
     issuerUrl: "https://tasdiqapp.com",
     validFrom: "2026-11-25T00:00:00.000Z",
-    displayName: "Recipient Name",
-    publicNameConsent: true,
     emailHash: "b".repeat(64),
     salt: "another-random-salt",
     achievement: {
@@ -46,7 +72,7 @@ Deno.test("buildCredential includes the recipient name only after explicit conse
     },
   });
   const subject = credential.credentialSubject as Record<string, unknown>;
-  if (subject.name !== "Recipient Name") throw new Error("Consented recipient name was omitted");
+  if ("name" in subject) throw new Error("Recipient name was included in the signed subject");
 });
 
 Deno.test("hashRecipientEmail normalizes email and uses the supplied salt", async () => {
@@ -57,14 +83,3 @@ Deno.test("hashRecipientEmail normalizes email and uses the supplied salt", asyn
   if (first === differentSalt) throw new Error("Salt did not affect the email hash");
 });
 
-Deno.test("consented public names must come from the signed subject", () => {
-  if (consentedRecipientName("Signed Name", true) !== "Signed Name") {
-    throw new Error("Consented signed name was not included");
-  }
-  if (consentedRecipientName("Signed Name", false) !== undefined) {
-    throw new Error("Name was included without current consent");
-  }
-  if (consentedRecipientName(undefined, true) !== undefined) {
-    throw new Error("Name absent from the signed subject was synthesized");
-  }
-});

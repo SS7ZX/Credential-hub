@@ -7,7 +7,7 @@ import {
   RequestBodyError,
 } from "../_shared/http.ts";
 import { getAdminClient, requireOrganizationRole } from "../_shared/supabase.ts";
-import { consentedRecipientName } from "../_shared/credential.ts";
+import { setCredentialPdfMetadata } from "../_shared/pdf-metadata.ts";
 
 const requestSchema = z.object({ credentialId: z.string().uuid() }).strict();
 type CredentialRow = {
@@ -17,7 +17,7 @@ type CredentialRow = {
   serial_number: string;
   issued_at: string | null;
   credential_json: Record<string, unknown> | null;
-  recipients: { public_name_consent: boolean } | Array<{ public_name_consent: boolean }> | null;
+  recipients: { full_name: string | null } | Array<{ full_name: string | null }> | null;
 };
 
 function printable(value: unknown, fallback: string): string {
@@ -47,7 +47,7 @@ Deno.serve(async (request) => {
 
     const { data: rowData, error: credentialError } = await admin
       .from("credentials")
-      .select("id, organization_id, status, serial_number, issued_at, credential_json, recipients(public_name_consent)")
+      .select("id, organization_id, status, serial_number, issued_at, credential_json, recipients(full_name)")
       .eq("id", credentialId)
       .eq("status", "issued")
       .single();
@@ -70,12 +70,10 @@ Deno.serve(async (request) => {
     const recipient = Array.isArray(credential.recipients)
       ? credential.recipients[0]
       : credential.recipients;
-    const recipientName = consentedRecipientName(
-      subject.name,
-      recipient?.public_name_consent === true,
-    );
+    const recipientName = recipient?.full_name?.trim();
 
     const document = await PDFDocument.create();
+    setCredentialPdfMetadata(document);
     const page = document.addPage([841.89, 595.28]);
     const heading = await document.embedFont(StandardFonts.HelveticaBold);
     const body = await document.embedFont(StandardFonts.Helvetica);
