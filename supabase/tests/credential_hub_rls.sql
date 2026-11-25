@@ -14,7 +14,9 @@ values
     ('10000000-0000-0000-0000-000000000003', 'authenticated', 'authenticated', 'issuer-a@test.invalid', '', now(), '{}', '{}', now(), now()),
     ('10000000-0000-0000-0000-000000000004', 'authenticated', 'authenticated', 'admin-a@test.invalid', '', now(), '{}', '{}', now(), now()),
     ('10000000-0000-0000-0000-000000000005', 'authenticated', 'authenticated', 'owner-b@test.invalid', '', now(), '{}', '{}', now(), now()),
-    ('10000000-0000-0000-0000-000000000006', 'authenticated', 'authenticated', 'new-member@test.invalid', '', now(), '{}', '{}', now(), now());
+    ('10000000-0000-0000-0000-000000000006', 'authenticated', 'authenticated', 'new-member@test.invalid', '', now(), '{}', '{}', now(), now()),
+    ('10000000-0000-0000-0000-000000000007', 'authenticated', 'authenticated', 'unverified-owner@test.invalid', '', null, '{}', '{}', now(), now()),
+    ('10000000-0000-0000-0000-000000000008', 'authenticated', 'authenticated', 'expired-member@test.invalid', '', now(), '{}', '{}', now(), now());
 
 insert into public.organizations (id, name, slug, created_by)
 values
@@ -74,7 +76,7 @@ insert into public.issuance_rows (
     status, credential_id
 )
 values
-    ('71000000-0000-0000-0000-000000000001', '20000000-0000-0000-0000-000000000001', '70000000-0000-0000-0000-000000000001', 1, '{}', 'row-a', 'succeeded', '80000000-0000-0000-0000-000000000001'),
+    ('71000000-0000-0000-0000-000000000001', '20000000-0000-0000-0000-000000000001', '70000000-0000-0000-0000-000000000001', 1, '{"email":"recipient-a@test.invalid","full_name":"Recipient A"}', 'row-a', 'succeeded', '80000000-0000-0000-0000-000000000001'),
     ('71000000-0000-0000-0000-000000000002', '20000000-0000-0000-0000-000000000002', '70000000-0000-0000-0000-000000000002', 1, '{}', 'row-b', 'succeeded', '80000000-0000-0000-0000-000000000002');
 
 insert into public.status_lists (organization_id, revoked_credential_ids)
@@ -177,6 +179,29 @@ select ok(
     'authenticated clients cannot directly insert issuance results, status, events, or audit rows'
 );
 select ok(
+    not has_table_privilege('authenticated', 'public.organization_invitations', 'SELECT')
+    and not has_table_privilege('authenticated', 'public.organization_invitations', 'INSERT')
+    and not has_table_privilege('authenticated', 'public.organization_invitations', 'UPDATE')
+    and not has_table_privilege('authenticated', 'public.organization_invitations', 'DELETE'),
+    'authenticated clients cannot directly access invitation records'
+);
+select ok(
+    not has_table_privilege('authenticated', 'public.email_send_attempts', 'SELECT')
+    and not has_table_privilege('authenticated', 'public.email_send_attempts', 'INSERT')
+    and not has_table_privilege('authenticated', 'public.email_send_attempts', 'UPDATE')
+    and not has_table_privilege('authenticated', 'public.email_send_attempts', 'DELETE')
+    and
+    not has_table_privilege('authenticated', 'public.recipient_access_tokens', 'SELECT')
+    and not has_table_privilege('authenticated', 'public.recipient_access_tokens', 'INSERT')
+    and not has_table_privilege('authenticated', 'public.recipient_access_tokens', 'UPDATE')
+    and not has_table_privilege('authenticated', 'public.recipient_access_tokens', 'DELETE')
+    and not has_table_privilege('authenticated', 'public.recipient_management_sessions', 'SELECT')
+    and not has_table_privilege('authenticated', 'public.recipient_management_sessions', 'INSERT')
+    and not has_table_privilege('authenticated', 'public.recipient_management_sessions', 'UPDATE')
+    and not has_table_privilege('authenticated', 'public.recipient_management_sessions', 'DELETE'),
+    'authenticated clients cannot directly access recipient management tokens or sessions'
+);
+select ok(
     not has_table_privilege('authenticated', 'public.issuance_rows', 'UPDATE')
     and not has_table_privilege('authenticated', 'public.credentials', 'UPDATE')
     and not has_table_privilege('authenticated', 'public.status_lists', 'UPDATE')
@@ -207,6 +232,22 @@ select throws_ok(
     $$insert into public.organizations(name, slug, created_by)
       values ('Viewer Org', 'viewer-org', '10000000-0000-0000-0000-000000000002')$$,
     '42501', null, 'viewer cannot insert organizations'
+);
+select throws_ok(
+    $$select public.create_organization('Viewer Org', 'viewer-org', '10000000-0000-0000-0000-000000000002')$$,
+    '42501', null, 'authenticated users cannot self-provision organizations'
+);
+select throws_ok(
+    $$select public.create_recipient_access_token('80000000-0000-0000-0000-000000000001', repeat('c', 64))$$,
+    '42501', null, 'authenticated users cannot create recipient access tokens'
+);
+select throws_ok(
+    $$select public.redeem_recipient_access_token(repeat('c', 64), repeat('d', 64))$$,
+    '42501', null, 'authenticated users cannot redeem recipient access tokens directly'
+);
+select throws_ok(
+    $$select public.set_recipient_credential_visibility(repeat('d', 64), 'public')$$,
+    '42501', null, 'authenticated users cannot update recipient visibility without redeeming a link'
 );
 select throws_ok(
     $$insert into public.credentials(organization_id, serial_number)
@@ -315,15 +356,20 @@ select throws_ok(
     'P0001', 'Insufficient organization role', 'viewer cannot revoke credentials'
 );
 select throws_ok(
+    $$select public.set_credential_visibility('80000000-0000-0000-0000-000000000001', 'public')$$,
+    'P0001', 'Insufficient organization role', 'viewer cannot change credential visibility'
+);
+select throws_ok(
     $$select public.persist_issuance_row(
+        '10000000-0000-0000-0000-000000000002',
         '70000000-0000-0000-0000-000000000001',
-        2, '{"email":"viewer@test.invalid"}', 'viewer-row-unique',
+        2, '{"email":"viewer@test.invalid"}'::jsonb, 'viewer-row-unique',
         'Viewer Recipient', 'viewer@test.invalid', 'hash-viewer', 'salt-viewer',
         false, 'skip', '81000000-0000-0000-0000-000000000002',
-        'TSQ-2026-000010', now(), null, 'unlisted', '{}',
+        now(), null, 'unlisted', '{}'::jsonb,
         'viewer-test-jws', 'key-a', 'hash-viewer-content', null
     )$$,
-    'P0001', 'Insufficient organization role', 'viewer cannot persist credentials'
+    '42501', null, 'authenticated users cannot directly execute the persistence RPC'
 );
 reset role;
 
@@ -375,16 +421,29 @@ select lives_ok(
       values ('20000000-0000-0000-0000-000000000001', '30000000-0000-0000-0000-000000000001', '40000000-0000-0000-0000-000000000001', '10000000-0000-0000-0000-000000000003', 1)$$,
     'issuer can create a batch'
 );
+reset role;
+set local role service_role;
 select lives_ok(
     $$select public.persist_issuance_row(
+        '10000000-0000-0000-0000-000000000003',
         (select id from public.issuance_batches where organization_id = '20000000-0000-0000-0000-000000000001' and created_by = '10000000-0000-0000-0000-000000000003' order by created_at desc limit 1),
-        1, '{"email":"new@test.invalid"}', 'issuer-row-unique',
+        1, '{"email":"new@test.invalid"}'::jsonb, 'issuer-row-unique',
         'New Recipient', 'new@test.invalid', 'hash-new', 'salt-new', false, 'skip',
-        '81000000-0000-0000-0000-000000000001', 'TSQ-2026-000009', now(), null,
-        'unlisted', '{}', 'issuer-test-jws', 'key-a', 'hash-content', null
+        '81000000-0000-0000-0000-000000000001', now(), null,
+        'unlisted', '{}'::jsonb, 'issuer-test-jws', 'key-a', 'hash-content', null
     )$$,
-    'issuer can persist an issued credential through the atomic RPC'
+    'service role can persist an issued credential for an issuer after internal role validation'
 );
+insert into public.email_events (organization_id, credential_id, type, payload)
+values (
+    '20000000-0000-0000-0000-000000000001',
+    '81000000-0000-0000-0000-000000000001',
+    'sent',
+    '{"recipient":"new@test.invalid"}'
+);
+reset role;
+set local role authenticated;
+set local request.jwt.claims = '{"sub":"10000000-0000-0000-0000-000000000003","role":"authenticated"}';
 select throws_ok(
     $$select public.revoke_credential('80000000-0000-0000-0000-000000000001', 'issuer attempt')$$,
     'P0001', 'Insufficient organization role', 'issuer cannot revoke'
@@ -393,22 +452,111 @@ select throws_ok(
     $$select public.anonymize_recipient('60000000-0000-0000-0000-000000000001')$$,
     'P0001', 'Insufficient organization role', 'issuer cannot anonymize recipients'
 );
+select throws_ok(
+    $$select public.set_credential_visibility('80000000-0000-0000-0000-000000000001', 'public')$$,
+    'P0001', 'Insufficient organization role', 'issuer cannot change credential visibility'
+);
+reset role;
+set local role service_role;
+select throws_ok(
+    $$select public.persist_issuance_row(
+        '10000000-0000-0000-0000-000000000002',
+        '70000000-0000-0000-0000-000000000001',
+        2, '{"email":"viewer@test.invalid"}'::jsonb, 'viewer-service-row',
+        'Viewer Recipient', 'viewer@test.invalid', 'hash-viewer', 'salt-viewer',
+        false, 'skip', '81000000-0000-0000-0000-000000000003',
+        now(), null, 'unlisted', '{}'::jsonb,
+        'viewer-test-jws', 'key-a', 'hash-viewer-content', null
+    )$$,
+    'P0001', 'Insufficient organization role', 'persistence RPC rejects a viewer actor even when called by the service role'
+);
 reset role;
 
 -- Admin can revoke; owner can manage organization members.
 set local role authenticated;
 set local request.jwt.claims = '{"sub":"10000000-0000-0000-0000-000000000004","role":"authenticated"}';
 select lives_ok(
+    $$select public.set_credential_visibility('80000000-0000-0000-0000-000000000001', 'public')$$,
+    'admin can change credential visibility'
+);
+select lives_ok(
     $$select public.revoke_credential('80000000-0000-0000-0000-000000000001', 'admin test revocation')$$,
     'admin can revoke credentials'
+);
+select is(
+    (select visibility::text from public.credentials where id = '80000000-0000-0000-0000-000000000001'),
+    'public',
+    'admin visibility change is persisted'
+);
+select throws_ok(
+    $$insert into public.organization_members(organization_id, user_id, role)
+      values ('20000000-0000-0000-0000-000000000001', '10000000-0000-0000-0000-000000000006', 'viewer')$$,
+    '42501', null, 'admin cannot insert organization members'
+);
+select lives_ok(
+    $$update public.organization_members set role = 'owner'
+      where organization_id = '20000000-0000-0000-0000-000000000001'
+        and user_id = '10000000-0000-0000-0000-000000000002'$$,
+    'admin member update is filtered by owner-only RLS'
+);
+select is(
+    (select role::text from public.organization_members
+     where organization_id = '20000000-0000-0000-0000-000000000001'
+       and user_id = '10000000-0000-0000-0000-000000000002'),
+    'viewer',
+    'admin cannot change a member role'
+);
+select throws_ok(
+    $$select public.add_organization_member_by_email(
+        '20000000-0000-0000-0000-000000000001', 'new-member@test.invalid', 'viewer'
+    )$$,
+    'P0001', 'Insufficient organization role', 'member-management RPC rejects an admin'
 );
 reset role;
 set local role authenticated;
 set local request.jwt.claims = '{"sub":"10000000-0000-0000-0000-000000000001","role":"authenticated"}';
 select lives_ok(
+    $$select public.add_organization_member_by_email(
+        '20000000-0000-0000-0000-000000000001', 'new-member@test.invalid', 'viewer'
+    )$$,
+    'owner can add an existing user through the role-checked member RPC'
+);
+select throws_ok(
     $$insert into public.organization_members(organization_id, user_id, role)
-      values ('20000000-0000-0000-0000-000000000001', '10000000-0000-0000-0000-000000000006', 'viewer')$$,
-    'owner can add organization members'
+      values ('20000000-0000-0000-0000-000000000001', '10000000-0000-0000-0000-000000000006', 'owner')$$,
+    '42501', null, 'owner cannot grant owner role through direct membership insert'
+);
+select throws_ok(
+    $$update public.organization_members set role = 'owner'
+      where organization_id = '20000000-0000-0000-0000-000000000001'
+        and user_id = '10000000-0000-0000-0000-000000000006'$$,
+    '42501', null, 'owner cannot escalate another member to owner through direct update'
+);
+select lives_ok(
+    $$update public.organization_members set role = 'viewer'
+      where organization_id = '20000000-0000-0000-0000-000000000001'
+        and user_id = '10000000-0000-0000-0000-000000000001'$$,
+    'owner cannot change their own membership role'
+);
+select is(
+    (select role::text from public.organization_members
+     where organization_id = '20000000-0000-0000-0000-000000000001'
+       and user_id = '10000000-0000-0000-0000-000000000001'),
+    'owner',
+    'owner retains their owner role after self-update attempt'
+);
+select lives_ok(
+    $$delete from public.organization_members
+      where organization_id = '20000000-0000-0000-0000-000000000001'
+        and user_id = '10000000-0000-0000-0000-000000000001'$$,
+    'owner cannot delete their own membership'
+);
+select is(
+    (select count(*)::int from public.organization_members
+     where organization_id = '20000000-0000-0000-0000-000000000001'
+       and user_id = '10000000-0000-0000-0000-000000000001'),
+    1,
+    'organization retains its owner membership'
 );
 select lives_ok(
     $$delete from public.organization_members
@@ -455,8 +603,313 @@ select ok(
     'all application SECURITY DEFINER functions pin search_path'
 );
 
+-- Owner-issued member invitations require a verified matching account and accept once.
+set local role service_role;
+set local request.jwt.claim.role = 'service_role';
+set local request.jwt.claims = '{"role":"service_role"}';
+select throws_ok(
+    $$select public.create_organization_invitation(
+      '20000000-0000-0000-0000-000000000001',
+      'unauthorized@test.invalid', 'viewer', '10000000-0000-0000-0000-000000000002'
+    )$$,
+    '42501', 'Insufficient organization role',
+    'invitation RPC rejects an actor without owner role'
+);
+select throws_ok(
+    $$select public.create_organization_invitation(
+      '20000000-0000-0000-0000-000000000001',
+      'invalid-role@test.invalid', 'owner', '10000000-0000-0000-0000-000000000001'
+    )$$,
+    '22023', 'Invalid invitation role',
+    'invitation RPC does not allow owner role assignment'
+);
+select is(
+    public.create_organization_invitation(
+      '20000000-0000-0000-0000-000000000001',
+      '  NEW-MEMBER@Test.Invalid  ', 'viewer', '10000000-0000-0000-0000-000000000001'
+    )->>'email',
+    'new-member@test.invalid',
+    'invitation email is normalized before persistence'
+);
+select lives_ok(
+    $$select public.create_organization_invitation(
+      '20000000-0000-0000-0000-000000000001',
+      'new-member@test.invalid', 'issuer', '10000000-0000-0000-0000-000000000001'
+    )$$,
+    'owner can resend an invitation with a changed role'
+);
+select is(
+    (select count(*)::int from public.organization_invitations
+     where organization_id = '20000000-0000-0000-0000-000000000001'
+       and email = 'new-member@test.invalid'
+       and accepted_at is null and revoked_at is null),
+    1,
+    'resending leaves only one active invitation for the email'
+);
+select is(
+    (select count(*)::int from public.organization_invitations
+     where organization_id = '20000000-0000-0000-0000-000000000001'
+       and email = 'new-member@test.invalid'
+       and revoked_at is not null),
+    1,
+    'resending revokes the previous invitation'
+);
+select throws_ok(
+    $$select public.accept_organization_invitation(
+      (select id from public.organization_invitations
+       where email = 'new-member@test.invalid' and revoked_at is not null limit 1),
+      '10000000-0000-0000-0000-000000000006'
+    )$$,
+    'P0001', 'Invitation is invalid or expired',
+    'revoked invitation cannot be accepted'
+);
+select throws_ok(
+    $$select public.accept_organization_invitation(
+      (select id from public.organization_invitations
+       where email = 'new-member@test.invalid' and revoked_at is null limit 1),
+      '10000000-0000-0000-0000-000000000005'
+    )$$,
+    '42501', 'A verified matching email account is required',
+    'a different verified account cannot accept the invitation'
+);
+select lives_ok(
+    $$select public.accept_organization_invitation(
+      (select id from public.organization_invitations
+       where email = 'new-member@test.invalid' and revoked_at is null limit 1),
+      '10000000-0000-0000-0000-000000000006'
+    )$$,
+    'verified matching account can accept the current invitation'
+);
+select lives_ok(
+    $$select public.accept_organization_invitation(
+      (select id from public.organization_invitations
+       where email = 'new-member@test.invalid' and accepted_at is not null limit 1),
+      '10000000-0000-0000-0000-000000000006'
+    )$$,
+    'same user can retry an already accepted invitation idempotently'
+);
+select is(
+    (select count(*)::int from public.organization_members
+     where organization_id = '20000000-0000-0000-0000-000000000001'
+       and user_id = '10000000-0000-0000-0000-000000000006'
+       and role = 'issuer'),
+    1,
+    'acceptance creates exactly one membership with the invited role'
+);
+select lives_ok(
+    $$select public.create_organization_invitation(
+      '20000000-0000-0000-0000-000000000001',
+      'unverified-owner@test.invalid', 'viewer', '10000000-0000-0000-0000-000000000001'
+    )$$,
+    'owner can invite an unverified but existing account'
+);
+select throws_ok(
+    $$select public.accept_organization_invitation(
+      (select id from public.organization_invitations where email = 'unverified-owner@test.invalid'),
+      '10000000-0000-0000-0000-000000000007'
+    )$$,
+    '42501', 'A verified matching email account is required',
+    'unverified account cannot accept an invitation'
+);
+reset role;
+update auth.users set email_confirmed_at = now()
+where id = '10000000-0000-0000-0000-000000000007';
+set local role service_role;
+select lives_ok(
+    $$select public.accept_organization_invitation(
+      (select id from public.organization_invitations where email = 'unverified-owner@test.invalid'),
+      '10000000-0000-0000-0000-000000000007'
+    )$$,
+    'account can accept after its email has been verified'
+);
+select lives_ok(
+    $$select public.create_organization_invitation(
+      '20000000-0000-0000-0000-000000000001',
+      'expired-member@test.invalid', 'viewer', '10000000-0000-0000-0000-000000000001'
+    )$$,
+    'owner can invite a previously unknown account'
+);
+update public.organization_invitations
+set expires_at = now() - interval '1 second'
+where email = 'expired-member@test.invalid';
+select throws_ok(
+    $$select public.accept_organization_invitation(
+      (select id from public.organization_invitations where email = 'expired-member@test.invalid'),
+      '10000000-0000-0000-0000-000000000008'
+    )$$,
+    'P0001', 'Invitation is invalid or expired',
+    'expired invitation cannot be accepted'
+);
+reset role;
+update auth.users set email_confirmed_at = null
+where id = '10000000-0000-0000-0000-000000000007';
+
 -- Even service_role and the table owner cannot mutate append-only audit rows.
 set local role service_role;
+set local request.jwt.claim.role = 'service_role';
+set local request.jwt.claims = '{"role":"service_role"}';
+select ok(
+    public.create_organization('Owner Allowlist Test', 'owner-allowlist-test', '10000000-0000-0000-0000-000000000001') is not null,
+    'service_role can atomically provision an organization for the authorized owner'
+);
+select is(
+    (select count(*)::int from public.organization_members m
+     join public.organizations o on o.id = m.organization_id
+     where o.slug = 'owner-allowlist-test'
+       and m.user_id = '10000000-0000-0000-0000-000000000001'
+       and m.role = 'owner'),
+    1,
+    'organization provisioning creates its owner membership'
+);
+select is(
+    (select count(*)::int from public.status_lists s
+     join public.organizations o on o.id = s.organization_id
+     where o.slug = 'owner-allowlist-test'),
+    1,
+    'organization provisioning creates its status list'
+);
+select is(
+    (select count(*)::int from public.audit_logs a
+     join public.organizations o on o.id = a.organization_id
+     where o.slug = 'owner-allowlist-test'
+       and a.action = 'organization.created'),
+    1,
+    'organization provisioning records an audit event'
+);
+select throws_ok(
+    $$select public.create_organization('Unverified Org', 'unverified-org', '10000000-0000-0000-0000-000000000007')$$,
+    '42501', 'Verified user is required', 'organization provisioning rejects unverified owner accounts'
+);
+set local request.jwt.claim.role = 'authenticated';
+set local request.jwt.claims = '{"role":"authenticated"}';
+select throws_ok(
+    $$select public.reserve_email_send('20000000-0000-0000-0000-000000000001', '80000000-0000-0000-0000-000000000001', 10)$$,
+    '42501', 'Service role required', 'authenticated callers cannot reserve email quota'
+);
+select throws_ok(
+    $$select public.create_recipient_access_token('81000000-0000-0000-0000-000000000001', repeat('c', 64))$$,
+    '42501', 'Service role required', 'recipient token RPC re-checks the caller role'
+);
+set local request.jwt.claim.role = 'service_role';
+set local request.jwt.claims = '{"role":"service_role"}';
+select isnt(
+    public.reserve_email_send('20000000-0000-0000-0000-000000000002', null, 2),
+    null,
+    'email quota can reserve organization invitation email without a credential'
+);
+select lives_ok(
+    $$select public.complete_email_send(
+      (select id from public.email_send_attempts
+       where organization_id = '20000000-0000-0000-0000-000000000002'
+         and credential_id is null and status = 'reserved' limit 1),
+      'provider-invitation', 'sent', null, true
+    )$$,
+    'invitation email reservation completes without a credential reference'
+);
+select is(
+    (select count(*)::int from public.email_events
+     where organization_id = '20000000-0000-0000-0000-000000000002'
+       and credential_id is null and provider_id = 'provider-invitation'),
+    1,
+    'invitation email completion is recorded in email events'
+);
+select isnt(
+    public.reserve_email_send('20000000-0000-0000-0000-000000000001', '80000000-0000-0000-0000-000000000001', 2),
+    null,
+    'email quota atomically reserves the first send'
+);
+select lives_ok(
+    $$select public.complete_email_send(
+      (select id from public.email_send_attempts where organization_id = '20000000-0000-0000-0000-000000000001' and status = 'reserved' limit 1),
+      'provider-first', 'sent', null, true
+    )$$,
+    'email reservation completion records provider outcome and event atomically'
+);
+select isnt(
+    public.reserve_email_send('20000000-0000-0000-0000-000000000001', '80000000-0000-0000-0000-000000000001', 2),
+    null,
+    'email quota atomically reserves a send below its cap'
+);
+select lives_ok(
+    $$select public.complete_email_send(
+      (select id from public.email_send_attempts where organization_id = '20000000-0000-0000-0000-000000000001' and status = 'reserved' limit 1),
+      'provider-second', 'failed', 'provider rejection', false
+    )$$,
+    'failed provider attempts still count against the daily plan limit'
+);
+select is(
+    public.reserve_email_send('20000000-0000-0000-0000-000000000001', '80000000-0000-0000-0000-000000000001', 2),
+    null,
+    'email quota refuses sends at the daily cap'
+);
+update public.email_send_attempts
+set created_at = now() - interval '25 hours'
+where organization_id = '20000000-0000-0000-0000-000000000001';
+select isnt(
+    public.reserve_email_send('20000000-0000-0000-0000-000000000001', '80000000-0000-0000-0000-000000000001', 2),
+    null,
+    'email quota uses a rolling 24-hour window and releases expired attempts'
+);
+select is(
+    public.create_recipient_access_token('81000000-0000-0000-0000-000000000001', repeat('a', 64))->>'email',
+    'new@test.invalid',
+    'service_role creates a token only for an issued credential with a recipient email'
+);
+select is(
+    public.redeem_recipient_access_token(repeat('a', 64), repeat('b', 64))->>'credentialId',
+    '81000000-0000-0000-0000-000000000001',
+    'recipient redeems a valid one-time link into a credential-scoped session'
+);
+select throws_ok(
+    $$select public.redeem_recipient_access_token(repeat('a', 64), repeat('c', 64))$$,
+    'P0001', 'Access link is invalid, expired, or already used',
+    'recipient access link can be redeemed only once'
+);
+select is(
+    public.set_recipient_credential_visibility(repeat('b', 64), 'public')->>'visibility',
+    'public',
+    'recipient session can atomically make its credential public'
+);
+select is(
+    (select count(*)::int from public.audit_logs
+     where entity_id = '81000000-0000-0000-0000-000000000001'
+       and action = 'credential.visibility_changed_by_recipient'),
+    1,
+    'recipient visibility changes are audited without a user account'
+);
+select throws_ok(
+    $$select public.create_recipient_access_token('80000000-0000-0000-0000-000000000002', repeat('e', 64))$$,
+    'P0001', 'Issued credential recipient is unavailable',
+    'revoked credentials cannot receive recipient management links'
+);
+select lives_ok(
+    $$select public.create_recipient_access_token('81000000-0000-0000-0000-000000000001', repeat('3', 64))$$,
+    'service_role can issue a fresh recipient link'
+);
+update public.recipient_access_tokens
+set expires_at = now() - interval '1 minute'
+where token_hash = repeat('3', 64);
+select throws_ok(
+    $$select public.redeem_recipient_access_token(repeat('3', 64), repeat('4', 64))$$,
+    'P0001', 'Access link is invalid, expired, or already used',
+    'expired recipient access links cannot be redeemed'
+);
+select lives_ok(
+    $$select public.create_recipient_access_token('81000000-0000-0000-0000-000000000001', repeat('5', 64))$$,
+    'service_role can issue another single-use link'
+);
+select lives_ok(
+    $$select public.redeem_recipient_access_token(repeat('5', 64), repeat('6', 64))$$,
+    'a valid access link creates a management session'
+);
+update public.recipient_management_sessions
+set expires_at = now() - interval '1 minute'
+where token_hash = repeat('6', 64);
+select throws_ok(
+    $$select public.set_recipient_credential_visibility(repeat('6', 64), 'unlisted')$$,
+    'P0001', 'Recipient management session is invalid or expired',
+    'expired recipient management sessions cannot change visibility'
+);
 select throws_ok(
     $$update public.audit_logs set action = 'tampered' where organization_id = '20000000-0000-0000-0000-000000000001'$$,
     'P0001', 'audit_logs is append-only', 'service_role cannot update audit logs'
@@ -504,6 +957,11 @@ select throws_ok(
     '23503', null, 'credential cannot reference another tenant batch'
 );
 select throws_ok(
+    $$insert into public.credentials(organization_id, kid, serial_number)
+      values ('20000000-0000-0000-0000-000000000001', 'key-b', 'CROSS-KEY')$$,
+    '23503', null, 'credential cannot reference another tenant signing key'
+);
+select throws_ok(
     $$insert into public.issuance_rows(organization_id, batch_id, row_number, payload, idempotency_key)
       values ('20000000-0000-0000-0000-000000000001', '70000000-0000-0000-0000-000000000002', 99, '{}', 'cross-tenant-row')$$,
     '23503', null, 'issuance row cannot reference another tenant batch'
@@ -522,6 +980,70 @@ select throws_ok(
     $$insert into public.verification_events(organization_id, credential_id, method, result)
       values ('20000000-0000-0000-0000-000000000001', '80000000-0000-0000-0000-000000000002', 'id', 'valid')$$,
     '23503', null, 'verification event cannot reference another tenant credential'
+);
+
+set local role service_role;
+set local request.jwt.claim.role = 'service_role';
+set local request.jwt.claims = '{"role":"service_role"}';
+select lives_ok(
+    $$select public.create_recipient_access_token('81000000-0000-0000-0000-000000000001', repeat('f', 64))$$,
+    'issuer email can create a scoped management link before recipient anonymization'
+);
+select lives_ok(
+    $$select public.redeem_recipient_access_token(repeat('f', 64), repeat('0', 64))$$,
+    'recipient management link can be redeemed before anonymization'
+);
+reset role;
+
+set local role authenticated;
+set local request.jwt.claims = '{"sub":"10000000-0000-0000-0000-000000000001","role":"authenticated"}';
+select lives_ok(
+    $$select public.anonymize_recipient((select id from public.recipients where email = 'new@test.invalid'))$$,
+    'owner can anonymize a recipient'
+);
+select ok(
+    (select full_name is null and email is null and email_hash is null and salt is null
+        and not public_name_consent and anonymized_at is not null
+     from public.recipients
+     where id = (select recipient_id from public.credentials where id = '81000000-0000-0000-0000-000000000001')),
+    'anonymization removes recipient identifiers and consent'
+);
+select ok(
+    (select status = 'revoked' and credential_json is null and jws is null
+        and content_hash is null and pdf_path is null
+     from public.credentials where id = '81000000-0000-0000-0000-000000000001'),
+    'anonymization revokes and clears the signed credential payload'
+);
+select is(
+    (select count(*)::int from public.revocations where credential_id = '81000000-0000-0000-0000-000000000001'),
+    1,
+    'anonymization retains a revocation record for the credential ID'
+);
+select ok(
+    (select revoked_credential_ids @> to_jsonb('81000000-0000-0000-0000-000000000001'::text)
+     from public.status_lists where organization_id = '20000000-0000-0000-0000-000000000001'),
+    'anonymized credential ID remains in the internal revoked-ID projection'
+);
+select ok(
+    (select payload = '{}'::jsonb from public.issuance_rows where credential_id = '81000000-0000-0000-0000-000000000001'),
+    'anonymization removes recipient payload from issuance rows'
+);
+select ok(
+    (select payload = '{"redacted": true}'::jsonb from public.email_events where credential_id = '81000000-0000-0000-0000-000000000001'),
+    'anonymization redacts email-event payloads while retaining their audit row'
+);
+reset role;
+select is(
+    (select count(*)::int from public.recipient_access_tokens
+     where credential_id = '81000000-0000-0000-0000-000000000001'),
+    0,
+    'recipient anonymization deletes outstanding access tokens'
+);
+select is(
+    (select count(*)::int from public.recipient_management_sessions
+     where credential_id = '81000000-0000-0000-0000-000000000001'),
+    0,
+    'recipient anonymization deletes active management sessions'
 );
 
 select * from finish();
