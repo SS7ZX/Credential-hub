@@ -137,6 +137,28 @@ export async function getDriveFileMetadata(
   return file as DriveFile;
 }
 
+export async function assertDriveFileInFolderTree(
+  file: DriveFile,
+  rootFolderId: string,
+  accessToken: string,
+  fetcher: typeof fetch = fetch,
+): Promise<void> {
+  validateDriveId(rootFolderId);
+  const root = await getDriveFileMetadata(rootFolderId, accessToken, fetcher);
+  if (root.mimeType !== "application/vnd.google-apps.folder") {
+    throw new Error("Selected Drive root is not a folder");
+  }
+  if (file.parents?.includes(rootFolderId)) return;
+  for (const parentId of file.parents ?? []) {
+    const parent = await getDriveFileMetadata(parentId, accessToken, fetcher);
+    if (
+      parent.mimeType === "application/vnd.google-apps.folder"
+      && parent.parents?.includes(rootFolderId)
+    ) return;
+  }
+  throw new Error("Drive file is outside the selected folder");
+}
+
 export async function listDriveFolder(
   folderId: string,
   accessToken: string,

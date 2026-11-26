@@ -97,6 +97,13 @@ select is((select count(*)::int from public.qr_layouts), 0, 'viewer cannot read 
 select is((select count(*)::int from public.stamp_runs), 0, 'viewer cannot read stamping runs');
 select is((select count(*)::int from public.stamp_files), 0, 'viewer cannot read stamped files');
 select throws_ok(
+    $$select * from public.list_stampable_credentials(
+      '21000000-0000-0000-0000-000000000001',
+      '41000000-0000-0000-0000-000000000001'
+    )$$,
+    '42501', null, 'viewer cannot retrieve stampable recipient credentials'
+);
+select throws_ok(
     $$insert into public.stamp_runs(
       organization_id, achievement_id, drive_folder_id, idempotency_key, created_by, expected_file_count
     ) values (
@@ -113,6 +120,13 @@ set local role authenticated;
 set local request.jwt.claims = '{"sub":"11000000-0000-0000-0000-000000000004","role":"authenticated"}';
 select is((select count(*)::int from public.stamp_runs), 0, 'another tenant owner cannot read stamping runs');
 select is((select count(*)::int from public.qr_layouts), 0, 'another tenant owner cannot read QR layouts');
+select throws_ok(
+    $$select * from public.list_stampable_credentials(
+      '21000000-0000-0000-0000-000000000001',
+      '41000000-0000-0000-0000-000000000001'
+    )$$,
+    '42501', null, 'another tenant owner cannot retrieve recipient credentials'
+);
 reset role;
 
 set local role authenticated;
@@ -124,6 +138,22 @@ select lives_ok(
       1, 50, 50, 72, 842, 595, 2
     )$$,
     'issuer can save a per-achievement QR layout'
+);
+select is(
+    (select count(*)::int from public.list_stampable_credentials(
+      '21000000-0000-0000-0000-000000000001',
+      '41000000-0000-0000-0000-000000000001'
+    )),
+    1,
+    'issuer can retrieve only issued credentials for mapping'
+);
+select is(
+    (select full_name from public.list_stampable_credentials(
+      '21000000-0000-0000-0000-000000000001',
+      '41000000-0000-0000-0000-000000000001'
+    )),
+    'Stamp Recipient A',
+    'issuer mapping projection includes private recipient name for review'
 );
 select throws_ok(
     $$select public.save_qr_layout(
@@ -261,6 +291,14 @@ select throws_ok(
       repeat('c', 64)
     )$$,
     'P0001', 'Stamp file is already processing', 'active file claims cannot run twice'
+);
+select throws_ok(
+    $$select public.fail_stamp_file(
+      (select id from public.stamp_files where drive_file_id = 'drive_file_12345'),
+      'other'
+    )$$,
+    'P0001', 'Stamp file has an active processing lease',
+    'a failed concurrent request cannot clear another worker active lease'
 );
 select throws_ok(
     $$select public.complete_stamp_file(

@@ -13,6 +13,7 @@ import {
   type PageDimensions,
 } from './layout'
 import { inspectPdfTemplate, MAX_STAMP_PDF_BYTES, PdfTemplateError, validatePdfFileType } from './pdf-template'
+import StampWorkflow from './StampWorkflow'
 
 GlobalWorkerOptions.workerSrc = pdfWorkerUrl
 
@@ -267,6 +268,7 @@ export default function DriveStamping({ organizationId, events, achievements }: 
     : null
 
   return (
+    <>
     <section className="admin-card batch-card stamping-panel">
       <span className="eyebrow">EXISTING PDF STAMPING</span>
       <h2>Configure QR placement</h2>
@@ -388,5 +390,7 @@ export default function DriveStamping({ organizationId, events, achievements }: 
         </>
       )}
     </section>
+    <StampWorkflow organizationId={organizationId} events={events} achievements={achievements} />
+    </>
   )
 }

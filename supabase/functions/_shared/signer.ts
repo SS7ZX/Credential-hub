@@ -43,8 +43,8 @@ function readSigningKeyConfiguration(): SigningKeyConfiguration {
 export class EnvKeySigner implements Signer {
   private readonly keyId: string;
   private readonly algorithm: SigningAlgorithm;
-  private readonly keyPromise: Promise<CryptoKey>;
-  private readonly publicKeyPromise: Promise<CryptoKey>;
+  private readonly keyPromise: ReturnType<typeof importPKCS8>;
+  private readonly publicKeyPromise: ReturnType<typeof importSPKI>;
   private readonly validationPromise: Promise<void>;
 
   constructor(configuration: SigningKeyConfiguration = readSigningKeyConfiguration()) {

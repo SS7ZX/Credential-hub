@@ -421,6 +421,18 @@ verify_jwt = true
 [functions.manage-recipient-credential]
 verify_jwt = false
 
+[functions.list-drive-folder]
+verify_jwt = true
+
+[functions.preview-drive-file]
+verify_jwt = true
+
+[functions.stamp-one-file]
+verify_jwt = true
+
+[functions.finalize-run]
+verify_jwt = true
+
 # [edge_runtime.secrets]
 # secret_key = "env(SECRET_VALUE)"
 

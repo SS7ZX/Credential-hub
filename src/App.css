@@ -190,6 +190,34 @@
 .stamping-page-nav label { display: flex; align-items: center; gap: 6px; color: #536c5f; font-weight: 700; }
 .stamping-page-nav select { min-height: 30px; padding: 4px 8px; }
 .stamping-fields { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 12px; margin: 14px 0; }
+.stamping-import-fields { grid-template-columns: repeat(2, minmax(0, 1fr)); margin: 15px 0; }
+.stamping-mapping, .stamping-review, .stamping-history { margin-top: 21px; padding-top: 17px; border-top: 1px solid #edf0e9; }
+.stamping-mapping h3, .stamping-review h3, .stamping-history h3 { margin: 0 0 12px; color: #355444; font-size: 14px; }
+.stamping-map-row { display: grid; grid-template-columns: minmax(160px, .7fr) minmax(220px, 1.3fr); align-items: center; gap: 12px; padding: 10px 0; border-top: 1px solid #edf0e9; }
+.stamping-issues { max-height: 260px; overflow: auto; margin: 8px 0 14px; padding: 12px 12px 12px 30px; border: 1px solid #efd4ca; border-radius: 6px; background: #fffaf8; color: #70463b; font-size: 10px; line-height: 1.6; }
+.stamping-issues strong { text-transform: uppercase; }
+.stamping-run-review { margin: 16px 0; padding: 15px; border: 1px solid #e8ede5; border-radius: 7px; background: #fcfdf9; }
+.stamping-samples { display: grid; gap: 10px; margin: 12px 0; }
+.stamping-sample-card { display: grid; grid-template-columns: minmax(160px, .8fr) minmax(220px, 1.2fr); gap: 14px; align-items: center; padding: 10px; border: 1px solid #e7ece4; border-radius: 6px; background: #fff; }
+.stamping-sample-image { min-height: 95px; display: grid; place-items: center; overflow: hidden; border: 1px solid #edf0e9; background: #f7f8f4; }
+.stamping-sample-image img { display: block; width: 100%; max-height: 175px; object-fit: contain; }
+.stamping-sample-image span { padding: 12px; color: #7a5549; font-size: 10px; text-align: center; }
+.stamping-sample-match { display: grid; gap: 5px; color: #375845; font-size: 11px; overflow-wrap: anywhere; }
+.stamping-sample-match .eyebrow:not(:first-child) { margin-top: 5px; }
+.stamping-sample-match small { color: #7b8b81; font-size: 9px; }
+.stamping-full-review { margin-top: 12px; color: #355444; font-size: 10px; }
+.stamping-full-review summary { cursor: pointer; font-weight: 700; }
+.stamping-file-list { margin-top: 8px; border-top: 1px solid #e8ede5; }
+.stamping-file-row { display: grid; grid-template-columns: 1fr 1.3fr .8fr .9fr; gap: 10px; padding: 8px 2px; border-bottom: 1px solid #edf0e9; color: #587065; font-size: 9px; overflow-wrap: anywhere; }
+.stamping-status { color: #68796f; text-transform: capitalize; }
+.stamping-status-completed { color: #4c713d; }
+.stamping-status-failed { color: #984a35; }
+.stamping-acknowledge { display: flex; align-items: flex-start; gap: 8px; margin: 14px 0; color: #536c5f; font-size: 10px; line-height: 1.6; cursor: pointer; }
+.stamping-acknowledge input { margin-top: 2px; accent-color: #426a45; }
+.stamping-history-row { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 12px 0; border-top: 1px solid #edf0e9; }
+.stamping-history-row strong, .stamping-history-row small { display: block; }
+.stamping-history-row strong { color: #375845; font-size: 10px; }
+.stamping-history-row small { margin-top: 4px; color: #829087; font-size: 9px; }
 
 @media (max-width: 760px) {
   .portal { width: min(100% - 36px, 580px); }
@@ -226,6 +254,8 @@
   .org-banner { align-items: flex-start; flex-direction: column; gap: 5px; }
   .stamping-fields { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .stamping-section-heading, .stamping-page-nav { align-items: flex-start; flex-direction: column; }
+  .stamping-import-fields, .stamping-map-row, .stamping-sample-card, .stamping-file-row { grid-template-columns: 1fr; }
+  .stamping-history-row { align-items: flex-start; flex-direction: column; }
 }
 
 @media (prefers-reduced-motion: reduce) {
