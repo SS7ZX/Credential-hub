@@ -1,5 +1,6 @@
 import { z } from "npm:zod@4";
 import {
+  corsHeaders,
   handleOptions,
   jsonResponse,
   rateLimit,
@@ -62,7 +63,7 @@ Deno.serve(async (request) => {
       if (!data.jws) return publicJsonResponse({ error: "Credential JWT is unavailable" }, 404);
       return new Response(data.jws, {
         headers: {
-          "Access-Control-Allow-Origin": "*",
+          ...corsHeaders,
           "Content-Type": "application/vc+jwt",
           "Cache-Control": "no-store",
         },

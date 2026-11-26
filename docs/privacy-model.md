@@ -46,3 +46,9 @@ policy.
 
 Recipient anonymization deletes stamped object files, revokes associated credentials, and removes
 the recipient name and email. It cannot recall previously downloaded, copied, or emailed PDFs.
+
+The application currently has no scheduled expiry or purge for stamped-PDF Storage objects,
+downloaded ZIPs, or report CSVs. A short-lived signed URL limits access duration but does not delete
+the underlying object. Before production use, the data owner must approve retention periods and an
+operational deletion procedure, then verify Storage deletion and audit retention in the pilot.
+Until that policy and procedure are approved and exercised, stamped-PDF production use is blocked.

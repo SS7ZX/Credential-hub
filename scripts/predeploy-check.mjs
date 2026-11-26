@@ -72,8 +72,8 @@ export function validatePublicSiteConfig(
 if (process.argv[1] && fileURLToPath(import.meta.url) === resolve(process.argv[1])) {
   try {
     const mode = process.env.NODE_ENV === 'development' ? 'development' : 'production'
-    const env = loadEnv(mode, process.cwd(), '')
-    const siteUrl = process.env.PUBLIC_SITE_URL ?? env.PUBLIC_SITE_URL
+    const siteUrl = process.env.PUBLIC_SITE_URL
+      ?? loadEnv(mode, process.cwd(), '').PUBLIC_SITE_URL
     const config = validatePublicSiteConfig(siteUrl)
     console.log(`Pre-deploy site configuration passed for ${config.siteUrl}`)
     console.log(`Derived issuer DID: ${config.did}`)

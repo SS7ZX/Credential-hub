@@ -1,7 +1,11 @@
 import { getAdminClient } from "./supabase.ts";
+import { getPublicSiteUrl } from "./site-config.ts";
 
+const corsOrigin = getPublicSiteUrl(
+  Deno.env.get("PUBLIC_SITE_URL") ?? "http://localhost:5173",
+);
 export const corsHeaders = {
-  "Access-Control-Allow-Origin": "*",
+  "Access-Control-Allow-Origin": corsOrigin,
   "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type",
   "Access-Control-Allow-Methods": "GET, POST, OPTIONS",
 };

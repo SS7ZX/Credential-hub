@@ -1,6 +1,7 @@
 import { PDFDocument, StandardFonts, rgb } from "npm:pdf-lib@1.17.1";
 import { z } from "npm:zod@4";
 import {
+  corsHeaders,
   handleOptions,
   jsonResponse,
   readJson,
@@ -167,8 +168,7 @@ Deno.serve(async (request) => {
     new Uint8Array(pdfBuffer).set(pdf);
     return new Response(pdfBuffer, {
       headers: {
-        "Access-Control-Allow-Origin": "*",
-        "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type",
+        ...corsHeaders,
         "Content-Type": "application/pdf",
         "Content-Disposition": `attachment; filename="credential-${credential.serial_number.replace(/[^A-Za-z0-9_-]/g, "_")}.pdf"`,
         "Cache-Control": "no-store",

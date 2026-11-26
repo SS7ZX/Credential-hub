@@ -409,6 +409,12 @@ verify_jwt = false
 [functions.verify-credential]
 verify_jwt = false
 
+[functions.issue-batch]
+verify_jwt = true
+
+[functions.generate-pdf]
+verify_jwt = true
+
 [functions.create-organization]
 verify_jwt = true
 
