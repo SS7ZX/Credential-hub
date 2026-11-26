@@ -150,6 +150,12 @@ export async function stampPdf(
   document.setKeywords([]);
   document.setCreator("Credential Hub");
   document.setProducer("Credential Hub");
+  const metadataEntry = document.catalog.get(PDFName.of("Metadata"));
+  if (metadataEntry) {
+    const metadataObject = document.context.lookup(metadataEntry);
+    const metadataRef = metadataObject && document.context.getObjectRef(metadataObject);
+    if (metadataRef) document.context.delete(metadataRef);
+  }
   document.catalog.delete(PDFName.of("Metadata"));
 
   const output = await document.save({ useObjectStreams: true });

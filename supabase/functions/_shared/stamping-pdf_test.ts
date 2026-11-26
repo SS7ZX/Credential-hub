@@ -17,6 +17,13 @@ async function sourcePdf(): Promise<Uint8Array> {
   document.addPage([841.89, 595.28]);
   document.setTitle("private.recipient@example.test");
   document.setAuthor("Private Recipient");
+  const metadata = document.context.register(
+    document.context.stream(
+      "<x:xmpmeta>private.recipient@example.test Private Recipient</x:xmpmeta>",
+      { Type: PDFName.of("Metadata"), Subtype: PDFName.of("XML") },
+    ),
+  );
+  document.catalog.set(PDFName.of("Metadata"), metadata);
   return await document.save();
 }
 
