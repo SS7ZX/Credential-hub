@@ -25,7 +25,6 @@ const createSchema = z.object({
   organizationId: z.string().uuid(),
   eventId: z.string().uuid(),
   achievementId: z.string().uuid(),
-  sourceFilename: z.string().trim().max(255).optional(),
   rowsTotal: z.number().int().min(1).max(1000),
   options: z.object({
     duplicatePolicy: z.enum(["skip", "reissue", "error"]).default("skip"),
@@ -111,7 +110,6 @@ async function createBatch(request: Request, raw: unknown) {
       event_id: input.eventId,
       achievement_id: input.achievementId,
       created_by: userId,
-      source_filename: input.sourceFilename ?? null,
       total: input.rowsTotal,
       options: input.options,
       status: "draft",

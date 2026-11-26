@@ -29,6 +29,16 @@ insert into public.issuer_keys (id, organization_id, kid, algorithm, public_jwk)
 values
     ('52000000-0000-0000-0000-000000000001', '21000000-0000-0000-0000-000000000001', 'stamp-key-a', 'EdDSA', '{}'),
     ('52000000-0000-0000-0000-000000000002', '21000000-0000-0000-0000-000000000002', 'stamp-key-b', 'EdDSA', '{}');
+update public.issuer_keys
+set status = 'retired'
+where kid = 'stamp-key-b';
+select is(
+    (select array_agg(kid order by kid)
+     from public.issuer_keys
+     where status in ('active', 'retired')),
+    array['stamp-key-a', 'stamp-key-b']::text[],
+    'issuer discovery keeps active and retired public keys available'
+);
 
 insert into public.events (id, organization_id, name)
 values
@@ -53,6 +63,16 @@ values
     ('71000000-0000-0000-0000-000000000001', '21000000-0000-0000-0000-000000000001', '31000000-0000-0000-0000-000000000001', '41000000-0000-0000-0000-000000000001', '11000000-0000-0000-0000-000000000001', 1),
     ('71000000-0000-0000-0000-000000000002', '21000000-0000-0000-0000-000000000002', '31000000-0000-0000-0000-000000000002', '41000000-0000-0000-0000-000000000002', '11000000-0000-0000-0000-000000000004', 1);
 
+update public.issuance_batches
+set source_filename = 'Stamp Recipient A stamp-recipient-a@test.invalid.csv'
+where id = '71000000-0000-0000-0000-000000000001';
+select is(
+    (select source_filename from public.issuance_batches
+     where id = '71000000-0000-0000-0000-000000000001'),
+    null::text,
+    'issuance source filenames are discarded instead of retained'
+);
+
 insert into public.credentials (
     id, organization_id, batch_id, achievement_id, recipient_id,
     status, serial_number, issued_at, credential_json, jws, kid
@@ -60,6 +80,31 @@ insert into public.credentials (
 values
     ('81000000-0000-0000-0000-000000000001', '21000000-0000-0000-0000-000000000001', '71000000-0000-0000-0000-000000000001', '41000000-0000-0000-0000-000000000001', '61000000-0000-0000-0000-000000000001', 'issued', 'STAMP-A-000001', now(), '{}', 'test-stamp-a', 'stamp-key-a'),
     ('81000000-0000-0000-0000-000000000002', '21000000-0000-0000-0000-000000000002', '71000000-0000-0000-0000-000000000002', '41000000-0000-0000-0000-000000000002', '61000000-0000-0000-0000-000000000002', 'issued', 'STAMP-B-000001', now(), '{}', 'test-stamp-b', 'stamp-key-b');
+
+insert into public.verification_events (
+    id, organization_id, credential_id, method, result, ip_hash
+)
+values (
+    '91000000-0000-0000-0000-000000000001',
+    '21000000-0000-0000-0000-000000000001',
+    '81000000-0000-0000-0000-000000000001',
+    'qr', 'valid', 'hashed-recipient-ip'
+);
+insert into public.revocations (organization_id, credential_id, reason)
+values (
+    '21000000-0000-0000-0000-000000000001',
+    '81000000-0000-0000-0000-000000000001',
+    'manual review for Stamp Recipient A at stamp-recipient-a@test.invalid'
+);
+insert into public.audit_logs (
+    id, organization_id, action, entity_type, entity_id, metadata
+)
+values (
+    '92000000-0000-0000-0000-000000000001',
+    '21000000-0000-0000-0000-000000000001',
+    'credential.revoked', 'credential', '81000000-0000-0000-0000-000000000001',
+    '{"reason":"Stamp Recipient A stamp-recipient-a@test.invalid"}'::jsonb
+);
 
 insert into public.status_lists (organization_id, revoked_credential_ids)
 values ('21000000-0000-0000-0000-000000000001', '[]');
@@ -341,6 +386,7 @@ select throws_ok(
     'P0001', 'Drive PDF changed after the file was registered',
     'retry rejects changed Drive source content'
 );
+
 reset role;
 
 set local role service_role;
@@ -392,10 +438,10 @@ select ok(
     'anonymization clears recipient PII'
 );
 select ok(
-    (select status = 'deleted' and drive_file_id is null
-        and source_sha256 is null and output_sha256 is null and storage_path is null
-     from public.stamp_files where drive_file_id is null
-       and recipient_id = '61000000-0000-0000-0000-000000000001'),
+    (select bool_and(status = 'deleted' and drive_file_id is null
+        and source_sha256 is null and output_sha256 is null and storage_path is null)
+     from public.stamp_files
+     where recipient_id = '61000000-0000-0000-0000-000000000001'),
     'anonymization removes stored object references and source identifiers'
 );
 select is(
@@ -408,6 +454,30 @@ select is(
      where credential_id = '81000000-0000-0000-0000-000000000001'),
     1,
     'credential ID and revocation evidence are retained'
+);
+select is(
+    (select credential_id from public.verification_events
+     where id = '91000000-0000-0000-0000-000000000001'),
+    null::uuid,
+    'anonymization unlinks verification history from the credential'
+);
+select is(
+    (select ip_hash from public.verification_events
+     where id = '91000000-0000-0000-0000-000000000001'),
+    null::text,
+    'anonymization removes the verification IP hash'
+);
+select is(
+    (select reason from public.revocations
+     where credential_id = '81000000-0000-0000-0000-000000000001'),
+    'Recipient data anonymized',
+    'anonymization replaces free-text revocation reasons'
+);
+select is(
+    (select metadata from public.audit_logs
+     where id = '92000000-0000-0000-0000-000000000001'),
+    '{"redacted": true}'::jsonb,
+    'anonymization redacts PII from append-only credential audit metadata'
 );
 select ok(
     (select bool_and(not metadata ? 'full_name' and not metadata ? 'email' and not metadata ? 'file_name')

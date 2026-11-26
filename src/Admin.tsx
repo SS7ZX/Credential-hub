@@ -299,7 +299,6 @@ export default function Admin({ session, onSignOut }: { session: Session; onSign
           organizationId: organization.id,
           eventId: selectedEvent,
           achievementId: selectedAchievement,
-          sourceFilename: csvName,
           rowsTotal: rows.length,
           options: { duplicatePolicy, visibility, sendEmail },
         },

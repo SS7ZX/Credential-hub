@@ -24,7 +24,7 @@ Authenticated owner, admin, and issuer PDF generation reads the name from the pr
 
 ## Deletion
 
-Data deletion removes recipient name, email, email hash, salt, issuance-row payloads, and email-event payload details. Active per-credential consent scopes receive withdrawal events with the system notice version. Credentials associated with the recipient are revoked; their signed payload, JWS, content hash, and PDF path are cleared while the credential ID, revocation record, consent history, and internal revoked-ID entry remain. Previously downloaded or copied credentials cannot be recalled.
+Data deletion removes recipient name, email, email hash, salt, issuance-row payloads, and email-event payload details. Verification events are retained without their credential link or IP hash. Free-text revocation reasons are replaced with a fixed non-PII marker; credential-linked audit metadata is replaced with a redaction marker while the audit event, credential ID, action, actor, and timestamp remain. Active per-credential consent scopes receive withdrawal events with the system notice version. Credentials associated with the recipient are revoked; their signed payload, JWS, content hash, and PDF path are cleared while the credential ID, revocation record, consent history, and internal revoked-ID entry remain. Previously downloaded or copied credentials cannot be recalled.
 
 ## Existing-PDF stamping and retained artifacts
 
@@ -39,6 +39,8 @@ names and emails are not written into PDF Info or XMP metadata. A stamped PDF ma
 recipient's achievement and the public credential ID/serial on its visible QR-adjacent labels.
 
 Run and file records contain IDs and sanitized error codes, not source filenames or recipient PII.
+CSV source filenames are discarded by the database and are not persisted; the UI may temporarily
+display the selected name locally.
 The issuer may download a per-achievement ZIP and formula-sanitized run report for an approved
 audit period. Browser ZIP assembly is client-side and must be used only on an issuer-controlled
 workstation. The report and downloaded PDFs must follow the organization’s retention and deletion
@@ -52,3 +54,7 @@ downloaded ZIPs, or report CSVs. A short-lived signed URL limits access duration
 the underlying object. Before production use, the data owner must approve retention periods and an
 operational deletion procedure, then verify Storage deletion and audit retention in the pilot.
 Until that policy and procedure are approved and exercised, stamped-PDF production use is blocked.
+
+The owner must also decide how long to retain unlinkable verification events, pseudonymous audit
+and consent records, credential/revocation identifiers, batch metadata, and provider-side email
+events. No retention period for those records is inferred or configured by this implementation.
