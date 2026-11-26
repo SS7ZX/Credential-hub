@@ -8,11 +8,11 @@
 
 ### DID document, JWKS, and `issuer_keys`
 
-**PROVEN — GAP: the `did:web` well-known route is not present in the repository.** The site origin derives `did:web:credential-hub-gules.vercel.app`, whose standard DID document URL is `https://credential-hub-gules.vercel.app/.well-known/did.json`. No static `did.json`, `.well-known/did.json`, `jwks.json`, or `.well-known/jwks.json` exists. The Vercel config has only a catch-all SPA rewrite. The application does have separate Supabase Function endpoints: `did-document` returns a DID document, and `public-keys` returns a JWKS-shaped `{ "keys": [...] }` object. Both read `kid` and `public_jwk` from `issuer_keys`; both currently filter with `status != ''`, so retired keys are published as well as active keys. Issuance itself selects `status = 'active'`.
+**PROVEN — local implementation and tests:** `vercel.json` rewrites `/.well-known/did.json` and `/.well-known/jwks.json` to a Vercel API proxy. The proxy calls only the fixed `did-document` or `public-keys` Supabase Function path, using server runtime `SUPABASE_URL` and `SUPABASE_PUBLISHABLE_KEY` (or `SUPABASE_ANON_KEY`); it never exposes a service-role key. Deno tests verify both rewrites, the fixed upstream path, HTTPS restriction, and that the DID/JWKS projections agree for the same `issuer_keys` rows.
 
-The local database and function sources prove how the endpoints are built, not that a conforming `did:web` resolver can discover them from the site origin. Treat DID interoperability as blocked until the well-known route exists and the active/retired key-publication policy is confirmed.
+Both documents publish keys with status `active` or `retired`. Retired public keys remain published so previously issued credentials remain verifiable; retirement prevents new signing but is not key-removal approval. Do not remove a retired key until the owner has decided that no retained credential requires it. The shared projection test verifies that the DID verification methods and JWKS contain the same public keys and `kid` values.
 
-**UNVERIFIED — staging steps:** after the route is implemented, request `/.well-known/did.json` at the staging site origin and confirm its `id` equals the configured DID. Request the staging `did-document` and `public-keys` endpoints with the staging publishable key, compare all `kid` values and public JWKs, and verify that each key needed to validate historical credentials remains published. Do not use production signing keys for this check.
+**UNVERIFIED — staging steps:** request `/.well-known/did.json` and `/.well-known/jwks.json` at the staging origin; confirm the DID equals the configured issuer DID, then compare `kid` and public JWK values with the staging `issuer_keys` rows. Confirm retired keys remain discoverable. Verify Vercel has the required server runtime URL and publishable/anon key configured. Do not use production signing keys for this check.
 
 ### `PUBLIC_SITE_URL`
 
@@ -55,9 +55,29 @@ Directive rationale:
 
 ### Edge Function CORS
 
-**PROVEN — code and test:** the shared Edge Function response helper now derives `Access-Control-Allow-Origin` from the normalized `PUBLIC_SITE_URL`, with a loopback-only local fallback. The two binary/JWT responses use the same header object; no `Access-Control-Allow-Origin: *` remains in Edge Function source. A Deno test compares the header to the configured origin. With the supplied site origin set in the process, `deno task test:functions` passed **40 tests**.
+**PROVEN — code and Deno tests:** `did-document`, `public-keys`, and `get-credential` use `Access-Control-Allow-Origin: *` because they are read-only public discovery/projection operations. They do not set `Access-Control-Allow-Credentials`; wildcard CORS is not used for authenticated or state-changing requests. All other Functions derive their exact allowed origin from normalized `PUBLIC_SITE_URL`.
 
-**UNVERIFIED — deployed secret/runtime:** staging steps: send an `OPTIONS` request to every Function with `Origin: <staging-origin>` and confirm `Access-Control-Allow-Origin` is exactly that origin. Repeat with `Origin: https://untrusted.invalid`; confirm the response does not reflect that origin. Check binary `generate-pdf` and VC-JWT `get-credential` responses as well as JSON responses. Confirm Supabase Function `PUBLIC_SITE_URL` is set to the staging origin.
+| Function | CORS | Justification |
+|---|---|---|
+| `did-document` | `*`, no credentials | Public DID discovery document. |
+| `public-keys` | `*`, no credentials | Public verification keys. |
+| `get-credential` | `*`, no credentials | Read-only public credential projection/JWT; no recipient PII absent consent. |
+| `verify-credential` | `PUBLIC_SITE_URL` | Public verification accepts submitted proof data; limit browser origins to the first-party verifier. |
+| `manage-recipient-credential` | `PUBLIC_SITE_URL` | Token-scoped recipient changes; not a public cross-origin read. |
+| `issue-batch` | `PUBLIC_SITE_URL` | Authenticated issuer writes. |
+| `generate-pdf` | `PUBLIC_SITE_URL` | Authenticated issuer PDF generation. |
+| `create-organization` | `PUBLIC_SITE_URL` | Owner bootstrap writes. |
+| `send-emails` | `PUBLIC_SITE_URL` | Authenticated email side effect. |
+| `accept-organization-invitation` | `PUBLIC_SITE_URL` | Authenticated invite acceptance. |
+| `list-drive-folder` | `PUBLIC_SITE_URL` | Authenticated Drive browsing. |
+| `preview-drive-file` | `PUBLIC_SITE_URL` | Authenticated Drive preview. |
+| `stamp-one-file` | `PUBLIC_SITE_URL` | Authenticated Storage writes and stamping. |
+| `finalize-run` | `PUBLIC_SITE_URL` | Authenticated run status and signed downloads. |
+| `anonymize-recipient` | `PUBLIC_SITE_URL` | Owner/admin-only destructive operation. |
+
+The Deno test asserts the exact wildcard allowlist, the site-origin policy for the remaining configured Functions, and absence of credentialed wildcard CORS. This proves source behavior, not deployed Function secrets or gateway behavior.
+
+**UNVERIFIED — staging checks:** test preflight and actual responses for every Function with the staging origin and an untrusted origin. Confirm only the three named public read endpoints return wildcard CORS, none returns `Access-Control-Allow-Credentials`, and every other response allows only the configured staging origin. Verify the Vercel discovery proxy calls work with staging runtime configuration.
 
 ### `verify_jwt` configuration
 
@@ -91,7 +111,7 @@ Directive rationale:
 
 ### Storage policies
 
-**PROVEN — local query and pgTAP:** local `storage.objects` has one policy: authenticated owner/admin/issuer `SELECT` for completed files whose recipient is neither anonymized nor pending anonymization. There are no authenticated insert/update/delete policies; uploads and deletion use the server-side service role. The local pgTAP suite passed 258 tests.
+**PROVEN — local query and pgTAP:** local `storage.objects` has one policy: authenticated owner/admin/issuer `SELECT` for completed files whose recipient is neither anonymized nor pending anonymization. There are no authenticated insert/update/delete policies; uploads and deletion use the server-side service role. The final local pgTAP rerun passed 268 tests.
 
 **UNVERIFIED — hosted policy parity:** compare the staging `storage.objects` policies and bucket configuration with the checked-in migration. Do not infer hosted policy state from the local database.
 
@@ -115,7 +135,7 @@ Directive rationale:
 
 ### Dependency audit and pinning
 
-**PROVEN — `npm audit --json`:** 361 dependency entries; **0 high, 0 critical, 1 moderate**. The moderate finding is direct dev dependency `ajv@8.17.1`, GHSA-2g4f-4pwh-qvx6 (ReDoS when `$data` is enabled), with a non-major fix available at `8.20.0`. `npm audit` exits 1 because of this finding. The Supabase CLI is exactly pinned to `3.3.0`; its CLI output notes `3.4.0` is available. `package-lock.json` pins the resolved dependency tree for `npm ci`; most `package.json` ranges still use semver carets, so versions are not all exact in the manifest.
+**PROVEN — package/source analysis:** the advisory is on the root `ajv@8.17.1` dev dependency. The production `@hookform/resolvers` package declares AJV only as an optional peer; application source imports neither Ajv nor a resolver, and the real client build is checked for bundled AJV code. The advisory is therefore not reachable through current application code in the production bundle, but remains in the developer dependency installation and should be resolved for build/CI hygiene. `npm audit` previously reported 0 high, 0 critical, and 1 moderate; it exits 1 on that finding. The Supabase CLI is exactly pinned to `3.3.0`.
 
 **UNVERIFIED — release disposition:** decide whether to update the AJV development dependency and re-run the audit before release. Confirm all resolved dependency changes in the lockfile.
 
@@ -129,25 +149,35 @@ Directive rationale:
 - Consent: active consent is withdrawn with a system notice event. Historical consent events retain IDs, scope, and timestamps, not the name/email.
 - Stamped files/Storage: Storage paths are deleted before final database anonymization; stamp rows clear Drive ID, hashes, Storage path, and error state. Local integration/pgTAP tests previously exercised deletion and retry behavior.
 - `email_events`: payload is replaced with a redaction marker for associated credential IDs.
+- `verification_events`: `credential_id` and `ip_hash` are cleared when the recipient is anonymized; method, result, and timestamp remain for aggregate history.
+- `revocations.reason`: replaced with the fixed non-PII text `Recipient data anonymized`; credential ID and revocation evidence remain.
+- Credential-linked `audit_logs.metadata`: replaced with `{"redacted": true}` through a private, one-row redaction permit. The append-only trigger still rejects all other updates and all deletes.
+- `issuance_batches.source_filename`: historical values are cleared by the new migration; a database trigger discards filenames on future insert/update, and the browser no longer sends the CSV filename to `issue-batch`.
+- `finalize-run`: service-role RPCs return a download path or run-file status only while the recipient is neither pending anonymization nor anonymized. Deno tests prove no signed URL is created when the path lookup is denied; pgTAP covers eligible, pending, and anonymized states.
 
-**PROVEN — gaps requiring correction or an explicit policy:**
+**PROVEN — residual privacy limitations:**
 
-- `verification_events` contains `credential_id` and `ip_hash`; the anonymization function does not modify it. No application write path to this table was found in the repository, so current hosted row count/content is **UNVERIFIED**. Decide whether to delete or redact rows on anonymization and add a behavioral test before treating coverage as complete.
-- `revoke_credential(p_reason)` accepts free-form text and stores it in both `revocations.reason` and `audit_logs.metadata.reason`. Anonymization does not redact an existing reason or audit metadata. A reason can contain recipient PII; constrain it to non-PII values or add a carefully reviewed redaction strategy and test.
-- `issuance_batches.source_filename` is stored as supplied and is not scrubbed during recipient anonymization. Confirm filenames are prohibited from containing recipient PII or remove/replace them under a documented policy.
-- Consent/stamp/credential/revocation/audit identifiers remain linkable after anonymization. This is pseudonymous retained evidence, not complete unlinkability.
-- `finalize-run` signs completed-file URLs using the service-role client without checking `anonymization_requested_at`. During the interval between anonymization request and Storage deletion, a new five-minute URL may still be minted despite the direct Storage read policy. Add a recipient-state guard and test this race before release.
+- Credential, revocation, audit entity, consent, and anonymized stamp identifiers remain linkable. This is pseudonymous retained evidence, not complete unlinkability.
+- Previously issued signed URLs are not recalled by the database guard. Storage deletion during anonymization removes the underlying object; staging must verify the actual Storage behavior and the configured URL TTL.
 
-**UNVERIFIED — hosted data:** no production or staging rows were inspected. The authorized owner must decide retention for verification events, free-form revocation reasons, source filenames, provider records, and pseudonymous audit links; then execute synthetic anonymization cases in staging and confirm all specified stores.
+**Retention decisions still required from the owner (no new retention period was selected):**
+
+1. How long to retain unlinkable verification event method/result/timestamp records, and whether to delete them after a chosen period.
+2. How long credential IDs, revocation-list entries, and revocation evidence must remain for verification/legal obligations.
+3. How long to retain redacted audit events and their pseudonymous actor/entity identifiers.
+4. How long to retain batch metadata, consent history, and other pseudonymous issuance records.
+5. Resend/provider-side email event retention and deletion requests, which the application cannot control.
+6. Stamped PDFs in Storage, downloaded ZIP/report files, backups, and deletion/restore behavior. No scheduled expiry is implemented.
+
+No hosted data was inspected. The owner must approve those retention choices, then execute synthetic anonymization cases in staging and confirm every store.
 
 ## H1 blockers
 
-1. Implement a standards-resolvable `/.well-known/did.json` path and verify its DID/JWKs against `issuer_keys`; confirm retired-key publication semantics.
-2. Fix anonymization gaps for verification events and free-form revocation/audit metadata; decide treatment of stored source filenames.
-3. Prevent service-role signed URL issuance while anonymization is pending.
-4. Verify Vercel headers/CSP, Supabase CORS origin, gateway `verify_jwt`, rate-limit 429s, and hosted RLS against staging.
-5. Resolve the moderate AJV advisory and review the CLI update notice.
-6. Approve retention and deletion procedures; live Drive, phone scan, 10-file pilot, deployed configuration, and H2 smoke/load evidence remain outstanding.
+1. Verify the DID/JWKS rewrites, proxy runtime environment, and retired-key publication against staging; local tests cannot prove deployed Vercel/Supabase behavior.
+2. Verify the signed URL guard and Storage deletion behavior against staging, including any URLs created before anonymization.
+3. Verify Vercel headers/CSP, per-function CORS, gateway `verify_jwt`, rate-limit 429s, and hosted RLS against staging.
+4. Approve the listed retention/deletion decisions and operational procedures.
+5. Complete live Drive, phone scan, and 10-file pilot checks; H2 smoke/load evidence remains outstanding.
 
 No deployment or push is authorized by this audit.
 
@@ -405,3 +435,82 @@ The following captures the finding and totals used in this audit; it is not a by
 ```
 
 `npm audit` exits 1 due to the moderate finding. No H2 smoke-test output exists yet; it is deferred until that phase is approved.
+
+## Final H1 blocker-fix rerun
+
+These are the final post-change local results. The reset and test commands use the repository-pinned Supabase CLI (`3.3.0`); no remote target, deployment, or `.env` file was accessed.
+
+### Database reset
+
+```text
+Target: local stack (127.0.0.1:54322)
+Resetting local database...
+Recreating database...
+Initialising schema...
+Applying migration 20261124133357_initial_credential_schema.sql...
+Applying migration 20261126094500_drive_stamping_p1.sql...
+Applying migration 20261126104500_drive_stamping_p3_pipeline.sql...
+Applying migration 20261126110000_drive_stamping_p3_failure_lease.sql...
+Applying migration 20261126111500_drive_stamping_p5_serial_prefix.sql...
+Applying migration 20261126125500_h1_anonymization_redactions.sql...
+Applying migration 20261126125600_h1_finalize_run_download_guards.sql...
+Finished supabase db reset on branch main.
+{"version":"","message":"Reset local database.","target":{"kind":"local","host":"127.0.0.1","port":54322}}
+```
+
+### Database tests
+
+```text
+credential_hub_rls.sql .... ok
+drive_stamping_rls.sql .... ok
+stamped_download_rls.sql .. ok
+All tests successful.
+Files=3, Tests=268
+Result: PASS
+```
+
+### Deno tests and type-check
+
+```text
+deno task test:functions
+ok | 47 passed | 0 failed (5s)
+
+deno task check:functions
+Check api/issuer-discovery.ts
+Check supabase/functions/did-document/index.ts
+Check supabase/functions/public-keys/index.ts
+Check supabase/functions/get-credential/index.ts
+Check supabase/functions/verify-credential/index.ts
+Check supabase/functions/issue-batch/index.ts
+Check supabase/functions/send-emails/index.ts
+Check supabase/functions/generate-pdf/index.ts
+Check supabase/functions/create-organization/index.ts
+Check supabase/functions/manage-recipient-credential/index.ts
+Check supabase/functions/accept-organization-invitation/index.ts
+Check supabase/functions/anonymize-recipient/index.ts
+Check supabase/functions/list-drive-folder/index.ts
+Check supabase/functions/preview-drive-file/index.ts
+Check supabase/functions/stamp-one-file/index.ts
+Check supabase/functions/finalize-run/index.ts
+```
+
+### Isolated frontend validation and real-build scan
+
+```text
+=== npm run build (isolated copy; dotenv files excluded) ===
+✓ 286 modules transformed.
+dist/assets/index-DRl5BpPc.css                                      33.80 kB │ gzip:   8.53 kB
+dist/assets/index-Dnq8XzU3.js                                    1,218.45 kB │ gzip: 422.28 kB
+(!) Some chunks are larger than 500 kB after minification.
+✓ built in 837ms
+
+=== npm run lint (isolated copy; dotenv files excluded) ===
+> eslint .
+
+=== npm test (isolated copy; dotenv files excluded) ===
+Test Files  7 passed (7)
+Tests       34 passed (34)
+
+=== npm run verify:client-bundle (real isolated build) ===
+Client bundle check passed (11 built files).
+```
