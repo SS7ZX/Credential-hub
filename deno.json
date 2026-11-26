@@ -2,6 +2,6 @@
   "nodeModulesDir": "manual",
   "tasks": {
     "check:functions": "deno check supabase/functions/did-document/index.ts supabase/functions/public-keys/index.ts supabase/functions/get-credential/index.ts supabase/functions/verify-credential/index.ts supabase/functions/issue-batch/index.ts supabase/functions/send-emails/index.ts supabase/functions/generate-pdf/index.ts supabase/functions/create-organization/index.ts supabase/functions/manage-recipient-credential/index.ts supabase/functions/accept-organization-invitation/index.ts supabase/functions/anonymize-recipient/index.ts supabase/functions/list-drive-folder/index.ts supabase/functions/preview-drive-file/index.ts supabase/functions/stamp-one-file/index.ts supabase/functions/finalize-run/index.ts",
-    "test:functions": "deno test --allow-read=supabase/functions/_shared supabase/functions/_shared"
+    "test:functions": "deno test --allow-read=supabase/functions/_shared supabase/functions/_shared supabase/functions/anonymize-recipient"
   }
 }

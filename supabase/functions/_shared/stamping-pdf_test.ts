@@ -76,6 +76,47 @@ Deno.test("stamping rejects signed, encrypted, rotated, oversized-page-count, an
   await assertStampError(encryptedMarker, layout, "pdf_encrypted");
 });
 
+Deno.test("stamps a realistic flattened single-image A4 certificate", async () => {
+  const source = await Deno.readFile(
+    new URL("./fixtures/flattened-canva-a4.pdf", import.meta.url),
+  );
+  const output = await stampPdf(
+    source,
+    verifyUrl,
+    "00000000-0000-4000-8000-000000000000",
+    "SAMPLE-FLAT-001",
+    layout,
+    20,
+  );
+  const stamped = await PDFDocument.load(output.bytes);
+  const page = stamped.getPages()[0];
+
+  if (
+    output.pageCount !== 1
+    || Math.abs(page.getWidth() - layout.expected_page_width_points) > 0.01
+    || Math.abs(page.getHeight() - layout.expected_page_height_points) > 0.01
+    || page.getRotation().angle !== 0
+  ) {
+    throw new Error("Flattened certificate dimensions or rotation changed");
+  }
+});
+
+Deno.test("rejects realistic digitally signed, encrypted, rotated, and non-A4 PDFs", async () => {
+  const fixtures = [
+    { file: "digitally-signed-a4.pdf", code: "pdf_signed" },
+    { file: "encrypted-a4.pdf", code: "pdf_encrypted" },
+    { file: "rotated-a4.pdf", code: "pdf_rotated" },
+    { file: "non-a4.pdf", code: "page_size_mismatch" },
+  ];
+
+  for (const fixture of fixtures) {
+    const source = await Deno.readFile(
+      new URL(`./fixtures/${fixture.file}`, import.meta.url),
+    );
+    await assertStampError(source, layout, fixture.code);
+  }
+});
+
 async function assertStampError(
   bytes: Uint8Array,
   nextLayout: QrLayout,

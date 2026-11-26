@@ -350,7 +350,16 @@ select throws_ok(
       '11000000-0000-0000-0000-000000000002',
       '61000000-0000-0000-0000-000000000001'
     )$$,
-    '42501', null, 'issuer cannot initiate recipient anonymization'
+    '42501', 'Insufficient organization role',
+    'service role cannot prepare anonymization for an issuer actor'
+);
+select throws_ok(
+    $$select public.prepare_recipient_anonymization(
+      '11000000-0000-0000-0000-000000000003',
+      '61000000-0000-0000-0000-000000000001'
+    )$$,
+    '42501', 'Insufficient organization role',
+    'service role cannot prepare anonymization for a viewer actor'
 );
 select is(
     array(

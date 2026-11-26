@@ -1,5 +1,7 @@
 # Deployment and production rollout
 
+> **STOP: Do not push this branch to `main` or deploy until you have completed and approved the Production rollout order below.**
+
 This document describes a controlled rollout for an operator who has explicitly approved the target. It does not authorize a deployment. Do not use this procedure until local and staging checks have passed and the data owner has approved the production change.
 
 ## Production rollout order
