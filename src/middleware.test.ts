@@ -12,7 +12,7 @@ afterEach(() => {
 describe('credential metadata middleware', () => {
   it('only adds crawler metadata from the public credential projection', async () => {
     vi.stubEnv('VITE_SUPABASE_URL', 'https://project.supabase.co')
-    vi.stubEnv('VITE_SUPABASE_ANON_KEY', 'public-anon-key')
+    vi.stubEnv('VITE_SUPABASE_PUBLISHABLE_KEY', 'public-publishable-key')
     const fetchMock = vi.fn()
       .mockResolvedValueOnce(new Response(appHtml))
       .mockResolvedValueOnce(new Response(JSON.stringify({
@@ -49,7 +49,7 @@ describe('credential metadata middleware', () => {
 
   it('does not add recipient metadata when consent is absent from the public projection', async () => {
     vi.stubEnv('VITE_SUPABASE_URL', 'https://project.supabase.co')
-    vi.stubEnv('VITE_SUPABASE_ANON_KEY', 'public-anon-key')
+    vi.stubEnv('VITE_SUPABASE_PUBLISHABLE_KEY', 'public-publishable-key')
     const fetchMock = vi.fn()
       .mockResolvedValueOnce(new Response(appHtml))
       .mockResolvedValueOnce(new Response(JSON.stringify({
@@ -68,6 +68,31 @@ describe('credential metadata middleware', () => {
 
     expect(html).toContain('Participation Award')
     expect(html).not.toContain('Awarded to')
+  })
+
+  it('supports the legacy anon key when no publishable key is configured', async () => {
+    vi.stubEnv('VITE_SUPABASE_URL', 'https://project.supabase.co')
+    vi.stubEnv('VITE_SUPABASE_PUBLISHABLE_KEY', undefined)
+    vi.stubEnv('VITE_SUPABASE_ANON_KEY', 'legacy-public-anon-key')
+    const fetchMock = vi.fn()
+      .mockResolvedValueOnce(new Response(appHtml))
+      .mockResolvedValueOnce(new Response(JSON.stringify({
+        credential: {
+          credentialSubject: {
+            achievement: { name: 'Participation Award' },
+          },
+        },
+      }), { status: 200 }))
+    vi.stubGlobal('fetch', fetchMock)
+
+    await middleware(new Request(requestUrl, {
+      headers: { 'user-agent': 'Twitterbot' },
+    }))
+
+    expect(fetchMock.mock.calls[1][1]?.headers).toMatchObject({
+      apikey: 'legacy-public-anon-key',
+      authorization: 'Bearer legacy-public-anon-key',
+    })
   })
 
   it('does not request credential metadata for regular visitors', async () => {

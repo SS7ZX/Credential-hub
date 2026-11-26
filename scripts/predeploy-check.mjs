@@ -1,5 +1,6 @@
 import { resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
+import { loadEnv } from 'vite'
 
 function isLocalhost(hostname) {
   return ['localhost', '127.0.0.1', '[::1]'].includes(hostname.toLowerCase())
@@ -70,7 +71,10 @@ export function validatePublicSiteConfig(
 
 if (process.argv[1] && fileURLToPath(import.meta.url) === resolve(process.argv[1])) {
   try {
-    const config = validatePublicSiteConfig(process.env.PUBLIC_SITE_URL)
+    const mode = process.env.NODE_ENV === 'development' ? 'development' : 'production'
+    const env = loadEnv(mode, process.cwd(), '')
+    const siteUrl = process.env.PUBLIC_SITE_URL ?? env.PUBLIC_SITE_URL
+    const config = validatePublicSiteConfig(siteUrl)
     console.log(`Pre-deploy site configuration passed for ${config.siteUrl}`)
     console.log(`Derived issuer DID: ${config.did}`)
   } catch (error) {

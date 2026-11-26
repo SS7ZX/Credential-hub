@@ -17,15 +17,15 @@ function isCrawler(userAgent: string): boolean {
 
 async function getPublicMetadata(id: string): Promise<{ title: string; description: string; image?: string }> {
   const supabaseUrl = process.env.VITE_SUPABASE_URL
-  const anonKey = process.env.VITE_SUPABASE_ANON_KEY
-  if (!supabaseUrl || !anonKey) return { title: fallbackTitle, description: fallbackDescription }
+  const supabaseKey = process.env.VITE_SUPABASE_PUBLISHABLE_KEY ?? process.env.VITE_SUPABASE_ANON_KEY
+  if (!supabaseUrl || !supabaseKey) return { title: fallbackTitle, description: fallbackDescription }
 
   try {
     const response = await fetch(`${supabaseUrl.replace(/\/$/, '')}/functions/v1/get-credential`, {
       method: 'POST',
       headers: {
-        apikey: anonKey,
-        authorization: `Bearer ${anonKey}`,
+        apikey: supabaseKey,
+        authorization: `Bearer ${supabaseKey}`,
         'content-type': 'application/json',
         'cache-control': 'no-cache',
       },

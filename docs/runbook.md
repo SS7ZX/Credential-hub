@@ -23,7 +23,7 @@ Use the Supabase Dashboard's Edge Function secrets for server-side values. Use V
 - Supabase injects `SUPABASE_URL`, `SUPABASE_ANON_KEY`, and `SUPABASE_SERVICE_ROLE_KEY` for Edge Functions. Do not copy the service-role key into Vercel or a `VITE_` variable.
 - Keep `RESEND_SANDBOX=true` and set `RESEND_SANDBOX_TO` to a staging-controlled mailbox. Do not enable live sending until the owner has configured and verified the sending domain and tested the daily quota.
 
-Set only `VITE_SUPABASE_URL` and `VITE_SUPABASE_ANON_KEY` in Vercel's Preview environment for the front end. These are intentionally public client configuration; database RLS and function authorization must protect data. The matching URL and anon key may also be used locally in an ignored `.env.local` file. Never put server secrets there or prefix them with `VITE_`.
+Set `VITE_SUPABASE_URL`, `VITE_SUPABASE_PUBLISHABLE_KEY` (or the legacy `VITE_SUPABASE_ANON_KEY`), and the environment's `PUBLIC_SITE_URL` in Vercel. The Supabase URL and publishable/anon key are public client configuration; database RLS and function authorization must protect data. `PUBLIC_SITE_URL` is also public: Vite injects only the site origin so generated links and the DID use the same host. Locally, use the local Supabase URL and key in ignored `.env.local`; never put server secrets there or prefix them with `VITE_`.
 
 The local credential-validation script takes `STAGING_SUPABASE_URL`, `STAGING_SUPABASE_ANON_KEY`, `STAGING_PROJECT_REF`, `STAGING_CREDENTIAL_ID`, and `STAGING_ACKNOWLEDGEMENT` from the process environment. These values are for that one staging validation invocation, not Vite build variables. The anon key is public by design; the acknowledgement is a guard, not a credential.
 
@@ -34,7 +34,8 @@ The local credential-validation script takes `STAGING_SUPABASE_URL`, `STAGING_SU
 | Variable | Where it lives / purpose | Who can read it | May it reach browser bundle? |
 | --- | --- | --- | --- |
 | `VITE_SUPABASE_URL` | Vercel Preview environment; local ignored `.env.local`; browser API endpoint | Anyone who can load the site | **Yes**; public endpoint |
-| `VITE_SUPABASE_ANON_KEY` | Vercel Preview environment; local ignored `.env.local`; Supabase client key | Anyone who can load the site | **Yes**; public key, not authorization |
+| `VITE_SUPABASE_PUBLISHABLE_KEY` | Vercel environment; local ignored `.env.local`; Supabase client key | Anyone who can load the site | **Yes**; public key, not authorization |
+| `VITE_SUPABASE_ANON_KEY` | Legacy alias accepted for older Supabase projects | Anyone who can load the site | **Yes**; public key, not authorization |
 | `SUPABASE_URL` | Supabase-injected Edge Function runtime value | Edge Functions and Supabase project operators | No as a server variable; the same URL is public through `VITE_SUPABASE_URL` |
 | `SUPABASE_ANON_KEY` | Supabase-injected Edge Function runtime value | Edge Functions and Supabase project operators | No as a server variable; the anon-key value is public if separately configured as `VITE_SUPABASE_ANON_KEY` |
 | `SUPABASE_SERVICE_ROLE_KEY` | Supabase-injected Edge Function runtime value | Edge Functions and privileged Supabase project operators | **Never** |
@@ -44,7 +45,7 @@ The local credential-validation script takes `STAGING_SUPABASE_URL`, `STAGING_SU
 | `RESEND_DAILY_PLAN_LIMIT` | Supabase Edge Function configuration | Email function and authorized project operators | **Never** |
 | `RESEND_SANDBOX` | Supabase Edge Function configuration | Email function and authorized project operators | **Never** |
 | `RESEND_SANDBOX_TO` | Supabase Edge Function configuration | Email function and authorized project operators | **Never** |
-| `PUBLIC_SITE_URL` | Supabase Edge Function configuration; canonical credential origin and `did:web` host | Functions and authorized project operators | No; keep configuration server-side |
+| `PUBLIC_SITE_URL` | Vercel build configuration and Supabase Edge Function configuration; canonical credential origin and `did:web` host | Public origin is visible to site visitors; function configuration is visible to authorized operators | **Yes, origin only**; it is not a secret |
 | `RATE_LIMIT_HASH_SECRET` | Supabase Edge Function secret | Functions that hash rate-limit identifiers; authorized project operators | **Never** |
 | `CREDENTIAL_SIGNING_KID` | Supabase Edge Function configuration | Issuance functions and authorized project operators | No as an environment variable; the `kid` is public in signed JWT headers/public key metadata |
 | `CREDENTIAL_SIGNING_ALGORITHM` | Supabase Edge Function configuration | Issuance functions and authorized project operators | No as an environment variable; the algorithm is public metadata |
@@ -73,13 +74,13 @@ The disabled SendGrid and placeholder secret entries in `supabase/config.toml` a
 6. **Apply schema to staging only.** Link explicitly to the staging project (`npx supabase link --project-ref <STAGING_PROJECT_REF>`), inspect the linked project identity, and review `npx supabase db push --linked --dry-run`. Only if the target and migration list are correct, apply with `npx supabase db push --linked`. This command changes the linked hosted project. Do not run `db push --remote`; do not proceed if the ref is ambiguous or production.
 7. **Initialize the staging issuer key.** Generate a separate staging key, store the private key in the staging Edge Function secrets, register only its public key through the owner workflow, then verify the DID/JWKS public key and `kid`.
 8. **Deploy Edge Functions.** Deploy the functions from this revision to staging after the schema and secrets are ready. Keep the existing per-function JWT settings; verify owner/member checks and public-endpoint rate limits.
-9. **Deploy the web app as a Vercel Preview.** Set only the staging `VITE_SUPABASE_URL` and `VITE_SUPABASE_ANON_KEY` in Preview, then deploy. Do not change Vercel Production variables or promote the Preview deployment.
+9. **Deploy the web app as a Vercel Preview.** Set the staging `VITE_SUPABASE_URL`, `VITE_SUPABASE_PUBLISHABLE_KEY` (or legacy anon key), and `PUBLIC_SITE_URL` in Preview, then deploy. Do not change Vercel Production variables or promote the Preview deployment.
 10. **Run the E2E checklist.** Use only test identities and a sandbox-controlled inbox. Complete the credential validation script against the staging URL after issuing a credential.
 11. **Record evidence.** Record commit/deployment identifiers, staging project ref, test outcomes, and any defects. Do not record private keys, auth tokens, recipient PII, raw recipient links, or full credential JWTs.
 
 ### Browser bundle leak check
 
-The repeatable check is `npm run verify:client-bundle` after a build. To verify the build-time boundary, use a fresh PowerShell process and set long, synthetic canary strings for server-only variables from the inventory, plus clearly fake `VITE_SUPABASE_URL` and `VITE_SUPABASE_ANON_KEY` values. Run `npm run build` and `npm run verify:client-bundle` in that same process. The checker scans every file under `dist/` for the supplied server-side canary values, server-side variable names, and private-key PEM markers. Do not read, print, or source a real `.env` file to perform this check. Only the two `VITE_` client settings and intentionally public credential/DID/JWK metadata may be present in browser-delivered output.
+The repeatable check is `npm run verify:client-bundle` after a build. To verify the build-time boundary, use a fresh PowerShell process and set long, synthetic canary strings for server-only variables from the inventory, plus clearly fake `VITE_SUPABASE_URL` and `VITE_SUPABASE_PUBLISHABLE_KEY` values. Run `npm run build` and `npm run verify:client-bundle` in that same process. The checker scans every file under `dist/` for the supplied server-side canary values, server-side variable names, and private-key PEM markers. Do not read, print, or source a real `.env` file to perform this check. Only public Supabase client settings, `PUBLIC_SITE_URL` as public origin, and intentionally public credential/DID/JWK metadata may be present in browser-delivered output.
 
 ## 3. Owner account recovery
 

@@ -1,11 +1,17 @@
-import { useCallback, useEffect, useRef, useState, type FormEvent, type ReactNode } from 'react'
+import { lazy, Suspense, useCallback, useEffect, useRef, useState, type FormEvent, type ReactNode } from 'react'
 import { BrowserRouter, Link, Route, Routes, useNavigate, useParams, useSearchParams } from 'react-router-dom'
 import type { Session } from '@supabase/supabase-js'
 import QrScanner from 'qr-scanner'
 import QRCode from 'qrcode'
 import Admin from './Admin'
+import { getPublicSiteUrl } from './config/brand'
 import { supabase } from './lib/supabase'
+import { copyId } from './copy/id'
 import './App.css'
+
+const StyleguidePage = import.meta.env.DEV
+  ? lazy(() => import('./pages/StyleguidePage'))
+  : null
 
 type VerificationCheck = { name: string; passed: boolean; detail: string }
 type VerificationResult = {
@@ -186,8 +192,9 @@ function VerificationForm({ initialValue = '' }: { initialValue?: string }) {
         setScannerOpen(false)
         let match: RegExpMatchArray | null = null
         try {
-          const url = new URL(decoded.data, window.location.origin)
-          if (url.origin === window.location.origin) {
+          const siteUrl = getPublicSiteUrl()
+          const url = new URL(decoded.data, siteUrl)
+          if (url.origin === siteUrl) {
             match = url.pathname.match(/^\/(?:c|verify)\/([0-9a-f-]{36})$/i)
           }
         } catch {
@@ -222,7 +229,7 @@ function VerificationForm({ initialValue = '' }: { initialValue?: string }) {
       let credentialUrl: RegExpMatchArray | null = null
       try {
         const url = new URL(trimmed)
-        if (url.origin === window.location.origin) {
+        if (url.origin === getPublicSiteUrl()) {
           credentialUrl = url.pathname.match(/^\/(?:c|verify)\/([0-9a-f-]{36})$/i)
         }
       } catch {
@@ -365,9 +372,9 @@ function HomePage() {
         <span className="eyebrow">SIMPLE BY DESIGN</span>
         <h2>Trust, without the guesswork.</h2>
         <div className="how-grid">
-          <article><span className="step-number">01</span><h3>Share</h3><p>Open the credential link or scan its QR code.</p></article>
-          <article><span className="step-number">02</span><h3>Check</h3><p>We verify the signature, issuer, dates, and status.</p></article>
-          <article><span className="step-number">03</span><h3>Know</h3><p>See a clear result backed by trusted issuer keys.</p></article>
+          <article><h3>Share</h3><p>Open the credential link or scan its QR code.</p></article>
+          <article><h3>Check</h3><p>We verify the signature, issuer, dates, and status.</p></article>
+          <article><h3>Know</h3><p>See a clear result backed by trusted issuer keys.</p></article>
         </div>
       </section>
       <VerificationForm />
@@ -383,7 +390,7 @@ function CredentialPage() {
   const [qr, setQr] = useState('')
   const [error, setError] = useState(supabase ? '' : 'Credential service is not configured yet.')
   const [copied, setCopied] = useState(false)
-  const shareUrl = `${window.location.origin}/c/${encodeURIComponent(id)}`
+  const shareUrl = `${getPublicSiteUrl()}/c/${encodeURIComponent(id)}`
 
   useEffect(() => {
     let active = true
@@ -771,6 +778,16 @@ function RecipientManagementPage() {
 function RoutedPortal() {
   return (
     <Routes>
+      {StyleguidePage && (
+        <Route
+          path="/_styleguide"
+          element={
+            <Suspense fallback={<div role="status">{copyId.common.loading}…</div>}>
+              <StyleguidePage />
+            </Suspense>
+          }
+        />
+      )}
       <Route path="/" element={<HomePage />} />
       <Route path="/admin" element={<AdminRoute />} />
       <Route path="/invite" element={<OrganizationInvitationPage />} />
