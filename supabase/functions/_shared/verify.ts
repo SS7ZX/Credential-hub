@@ -7,6 +7,7 @@ import {
 import { z } from "npm:zod@4";
 import { getAdminClient } from "./supabase.ts";
 import { validateCredential } from "./credential.ts";
+import { getOrganizationDid, getPublicSiteUrl } from "./site-config.ts";
 
 const compactJwsSchema = z.string()
   .min(20)
@@ -99,12 +100,13 @@ export async function verifyCredentialJwt(jwsInput: string): Promise<{
   } catch {
     throw new CredentialVerificationError("Credential does not match the Open Badges 3.0 schema");
   }
+  const expectedIssuerDid = getOrganizationDid();
   if (credential.issuer && typeof credential.issuer === "object") {
     const issuerId = (credential.issuer as Record<string, unknown>).id;
-    if (issuerId !== "did:web:tasdiqapp.com") {
+    if (issuerId !== expectedIssuerDid) {
       throw new CredentialVerificationError("Credential issuer is not trusted");
     }
-  } else if (credential.issuer !== "did:web:tasdiqapp.com") {
+  } else if (credential.issuer !== expectedIssuerDid) {
     throw new CredentialVerificationError("Credential issuer is not trusted");
   }
 
@@ -112,15 +114,18 @@ export async function verifyCredentialJwt(jwsInput: string): Promise<{
   const validFrom = typeof credential.validFrom === "string" ? Date.parse(credential.validFrom) : NaN;
   const validUntil = typeof credential.validUntil === "string" ? Date.parse(credential.validUntil) : null;
   const credentialId = typeof credential.id === "string" ? credential.id : "";
-  const matches = credentialId.match(/^https:\/\/tasdiqapp\.com\/credentials\/([0-9a-f-]{36})$/i);
-  if (!matches || !z.string().uuid().safeParse(matches[1]).success) {
+  const credentialPrefix = `${getPublicSiteUrl()}/credentials/`;
+  const credentialIdPart = credentialId.startsWith(credentialPrefix)
+    ? credentialId.slice(credentialPrefix.length)
+    : "";
+  if (!z.string().uuid().safeParse(credentialIdPart).success) {
     throw new CredentialVerificationError("Credential ID is malformed");
   }
 
   const { data: credentialRow, error: credentialError } = await client
     .from("credentials")
     .select("organization_id, status, visibility, kid")
-    .eq("id", matches[1])
+    .eq("id", credentialIdPart)
     .maybeSingle();
   if (credentialError) throw new Error("Could not resolve credential status");
   if (!credentialRow) throw new CredentialVerificationError("Credential is not registered");
@@ -142,7 +147,7 @@ export async function verifyCredentialJwt(jwsInput: string): Promise<{
     .from("revocations")
     .select("revoked_at")
     .eq("organization_id", credentialRow.organization_id)
-    .eq("credential_id", matches[1])
+    .eq("credential_id", credentialIdPart)
     .maybeSingle();
   if (revocationError) throw new Error("Could not resolve revocation status");
 

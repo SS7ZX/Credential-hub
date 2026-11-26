@@ -87,7 +87,7 @@ Deno.serve(async (request) => {
       borderColor: rgb(0.83, 0.87, 0.78),
       borderWidth: 1,
     });
-    page.drawText("TASDIQ  /  DIGITAL CREDENTIAL", {
+    page.drawText("DIGITAL CREDENTIAL", {
       x: 62,
       y: 512,
       size: 10,
@@ -136,7 +136,7 @@ Deno.serve(async (request) => {
       thickness: 1,
       color: rgb(0.88, 0.91, 0.85),
     });
-    page.drawText(`Issued by ${printable(issuer.name, "Tasdiq issuer")}`, {
+    page.drawText(`Issued by ${printable(issuer.name, "Credential issuer")}`, {
       x: 62,
       y: 112,
       size: 10,
@@ -158,7 +158,7 @@ Deno.serve(async (request) => {
       color: rgb(0.42, 0.49, 0.44),
     });
     page.drawText(
-      credential.issued_at ? `Issued ${new Date(credential.issued_at).toISOString().slice(0, 10)}` : "Issued by Tasdiq",
+      credential.issued_at ? `Issued ${new Date(credential.issued_at).toISOString().slice(0, 10)}` : "Issued by credential issuer",
       { x: 640, y: 65, size: 8, font: body, color: rgb(0.42, 0.49, 0.44) },
     );
 

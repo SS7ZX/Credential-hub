@@ -28,7 +28,7 @@ Deno.test("EnvKeySigner signs VC-JWTs with the matching configured public key", 
     algorithm: "EdDSA",
     ...keys,
   });
-  const token = await signer.sign({ id: "https://tasdiqapp.com/credentials/test" });
+  const token = await signer.sign({ id: "https://example.test/credentials/test" });
   const verified = await jwtVerify(token, await importJWK(await signer.getPublicJwk(), "EdDSA"), {
     algorithms: ["EdDSA"],
   });
@@ -37,7 +37,7 @@ Deno.test("EnvKeySigner signs VC-JWTs with the matching configured public key", 
     verified.protectedHeader.typ !== "vc+jwt" ||
     verified.protectedHeader.cty !== "vc" ||
     verified.protectedHeader.kid !== "test-ed25519" ||
-    verified.payload.id !== "https://tasdiqapp.com/credentials/test"
+    verified.payload.id !== "https://example.test/credentials/test"
   ) {
     throw new Error("Signer did not produce the expected VC-JWT");
   }
@@ -54,7 +54,7 @@ Deno.test("EnvKeySigner rejects mismatched private and public keys", async () =>
   });
 
   try {
-    await signer.sign({ id: "https://tasdiqapp.com/credentials/test" });
+    await signer.sign({ id: "https://example.test/credentials/test" });
   } catch (error) {
     if (
       error instanceof Error &&

@@ -33,7 +33,7 @@ create table public.organizations (
     website_url text,
     logo_url text,
     contact_email text,
-    did text not null default 'did:web:tasdiqapp.com',
+    did text not null,
     status text not null default 'active',
     serial_prefix text not null default 'TSQ',
     next_serial_number bigint not null default 1,
@@ -42,6 +42,7 @@ create table public.organizations (
     updated_at timestamptz not null default now(),
     constraint organizations_name_not_empty check (length(trim(name)) > 0),
     constraint organizations_slug_format check (slug ~ '^[a-z0-9]+(-[a-z0-9]+)*$'),
+    constraint organizations_did_format check (did ~ '^did:web:[A-Za-z0-9.-]+(%3A[0-9]{1,5})?$'),
     constraint organizations_serial_positive check (next_serial_number > 0)
 );
 
@@ -246,6 +247,7 @@ create table public.credentials (
     created_at timestamptz not null default now(),
     updated_at timestamptz not null default now(),
     unique (organization_id, id),
+    unique (organization_id, id, recipient_id),
     foreign key (organization_id, batch_id)
         references public.issuance_batches(organization_id, id)
         on delete restrict,
@@ -336,6 +338,9 @@ create table public.recipient_access_tokens (
     foreign key (organization_id, credential_id)
         references public.credentials(organization_id, id)
         on delete cascade,
+    foreign key (organization_id, credential_id, recipient_id)
+        references public.credentials(organization_id, id, recipient_id)
+        on delete cascade,
     foreign key (organization_id, recipient_id)
         references public.recipients(organization_id, id)
         on delete cascade,
@@ -358,6 +363,9 @@ create table public.recipient_management_sessions (
     foreign key (organization_id, credential_id)
         references public.credentials(organization_id, id)
         on delete cascade,
+    foreign key (organization_id, credential_id, recipient_id)
+        references public.credentials(organization_id, id, recipient_id)
+        on delete cascade,
     foreign key (organization_id, recipient_id)
         references public.recipients(organization_id, id)
         on delete cascade,
@@ -378,6 +386,9 @@ create table private.credential_name_consent_events (
     occurred_at timestamptz not null default clock_timestamp(),
     foreign key (organization_id, credential_id)
         references public.credentials(organization_id, id)
+        on delete cascade,
+    foreign key (organization_id, credential_id, recipient_id)
+        references public.credentials(organization_id, id, recipient_id)
         on delete cascade,
     foreign key (organization_id, recipient_id)
         references public.recipients(organization_id, id)
@@ -526,6 +537,7 @@ grant execute on function private.has_org_role(uuid, public.organization_role[])
 create or replace function public.create_organization(
     p_name text,
     p_slug text,
+    p_did text,
     p_user_id uuid
 )
 returns uuid language plpgsql security definer set search_path = ''
@@ -549,9 +561,12 @@ begin
     if length(v_slug) > 100 or v_slug !~ '^[a-z0-9]+(-[a-z0-9]+)*$' then
         raise exception 'Invalid organization slug';
     end if;
+    if p_did is null or p_did !~ '^did:web:[A-Za-z0-9.-]+(%3A[0-9]{1,5})?$' then
+        raise exception 'Invalid organization DID' using errcode = '22023';
+    end if;
 
-    insert into public.organizations(name, slug, created_by)
-    values (regexp_replace(trim(p_name), '\s+', ' ', 'g'), v_slug, p_user_id)
+    insert into public.organizations(name, slug, did, created_by)
+    values (regexp_replace(trim(p_name), '\s+', ' ', 'g'), v_slug, p_did, p_user_id)
     returning id into v_org_id;
 
     insert into public.organization_members(organization_id, user_id, role)
@@ -565,8 +580,8 @@ begin
 end;
 $$;
 
-revoke all on function public.create_organization(text, text, uuid) from public, anon, authenticated;
-grant execute on function public.create_organization(text, text, uuid) to service_role;
+revoke all on function public.create_organization(text, text, text, uuid) from public, anon, authenticated;
+grant execute on function public.create_organization(text, text, text, uuid) to service_role;
 
 create or replace function public.create_organization_invitation(
     p_organization_id uuid,

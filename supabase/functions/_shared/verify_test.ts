@@ -17,11 +17,11 @@ function jwsHeader(header: Record<string, unknown>): string {
 Deno.test("parseVcJwtHeader accepts a conforming VC-JWT header", () => {
   const header = parseVcJwtHeader(jwsHeader({
     alg: "EdDSA",
-    kid: "tasdiq-2026-01",
+    kid: "issuer-2026-01",
     typ: "vc+jwt",
     cty: "vc",
   }));
-  if (header.alg !== "EdDSA" || header.kid !== "tasdiq-2026-01") {
+  if (header.alg !== "EdDSA" || header.kid !== "issuer-2026-01") {
     throw new Error("VC-JWT protected header was not parsed");
   }
 });

@@ -1,8 +1,8 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import middleware from '../middleware'
 
-const requestUrl = 'https://tasdiqapp.com/c/123e4567-e89b-12d3-a456-426614174000'
-const appHtml = '<html><head><title>Tasdiq</title><meta name="description" content="Default"></head><body></body></html>'
+const requestUrl = 'https://example.test/c/123e4567-e89b-12d3-a456-426614174000'
+const appHtml = '<html><head><title>Credential Hub</title><meta name="description" content="Default"></head><body></body></html>'
 
 afterEach(() => {
   vi.unstubAllGlobals()
@@ -17,7 +17,7 @@ describe('credential metadata middleware', () => {
       .mockResolvedValueOnce(new Response(appHtml))
       .mockResolvedValueOnce(new Response(JSON.stringify({
         credential: {
-          issuer: { name: 'Tasdiq & Co' },
+          issuer: { name: 'Issuer & Co' },
           credentialSubject: {
             name: 'Ahmad R*** S***',
             identifier: {
@@ -40,7 +40,7 @@ describe('credential metadata middleware', () => {
     const html = await response.text()
 
     expect(response.headers.get('cache-control')).toBe('public, max-age=0, s-maxage=30')
-    expect(html).toContain('&lt;Gold Award&gt; | Tasdiq &amp; Co')
+    expect(html).toContain('&lt;Gold Award&gt; | Issuer &amp; Co')
     expect(html).toContain('Achievement &amp; impact · Awarded to Ahmad R*** S***')
     expect(html).toContain('https://assets.example.test/badge.png')
     expect(html).not.toContain('private-hash')

@@ -12,7 +12,8 @@
     "typecheck": "tsc -b",
     "keygen": "node scripts/generate-issuer-key.mjs",
     "validate:staging-credential": "node scripts/validate-staging-credential.mjs",
-    "verify:client-bundle": "node scripts/verify-client-bundle.mjs"
+    "verify:client-bundle": "node scripts/verify-client-bundle.mjs",
+    "predeploy:check": "node scripts/predeploy-check.mjs"
   },
   "dependencies": {
     "@hookform/resolvers": "^7.0.9",

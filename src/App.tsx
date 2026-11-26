@@ -17,7 +17,6 @@ type VerificationResult = {
     issuer?: string | { id?: string; name?: string }
     validFrom?: string
     validUntil?: string
-    subjectName?: string
     achievement?: { name?: string; description?: string; image?: string }
   }
   error?: string
@@ -146,9 +145,9 @@ function OrganizationInvitationPage() {
 function Header() {
   return (
     <header className="topbar">
-      <Link className="brand" to="/" aria-label="Tasdiq home">
+      <Link className="brand" to="/" aria-label="Credential Hub home">
         <span className="brand-mark">t</span>
-        <span>tasdiq</span>
+        <span>credential hub</span>
       </Link>
       <Link className="nav-link" to="/#verify">Verify a credential <span aria-hidden="true">↗</span></Link>
     </header>
@@ -188,7 +187,7 @@ function VerificationForm({ initialValue = '' }: { initialValue?: string }) {
         let match: RegExpMatchArray | null = null
         try {
           const url = new URL(decoded.data, window.location.origin)
-          if (url.origin === window.location.origin || url.origin === 'https://tasdiqapp.com') {
+          if (url.origin === window.location.origin) {
             match = url.pathname.match(/^\/(?:c|verify)\/([0-9a-f-]{36})$/i)
           }
         } catch {
@@ -197,7 +196,7 @@ function VerificationForm({ initialValue = '' }: { initialValue?: string }) {
         if (match) navigate(`/verify/${match[1]}`)
         else {
           setValue(decoded.data)
-          setError('That QR code is not a Tasdiq credential link. You can paste its credential ID or signed VC-JWT instead.')
+          setError('That QR code is not a credential link for this site. You can paste its credential ID or signed VC-JWT instead.')
         }
       },
       { onDecodeError: () => undefined, highlightScanRegion: true, highlightCodeOutline: true },
@@ -220,7 +219,15 @@ function VerificationForm({ initialValue = '' }: { initialValue?: string }) {
     try {
       const trimmed = input.trim()
       const idRoute = trimmed.match(/^\/?(?:c|verify)\/([0-9a-f-]{36})$/i)
-      const credentialUrl = trimmed.match(/^https:\/\/tasdiqapp\.com\/(?:c|verify)\/([0-9a-f-]{36})$/i)
+      let credentialUrl: RegExpMatchArray | null = null
+      try {
+        const url = new URL(trimmed)
+        if (url.origin === window.location.origin) {
+          credentialUrl = url.pathname.match(/^\/(?:c|verify)\/([0-9a-f-]{36})$/i)
+        }
+      } catch {
+        credentialUrl = null
+      }
       const uuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(trimmed)
       const body = uuid || idRoute || credentialUrl
         ? { id: uuid ? trimmed : (idRoute ?? credentialUrl)![1] }
@@ -313,7 +320,6 @@ function VerificationSummary({ result }: { result: VerificationResult }) {
       {result.credential && (
         <dl className="credential-details">
           {result.credential.achievement?.name && <><dt>Achievement</dt><dd>{result.credential.achievement.name}</dd></>}
-          {result.credential.subjectName && <><dt>Recipient</dt><dd>{result.credential.subjectName}</dd></>}
           {issuer && <><dt>Issuer</dt><dd>{issuer}</dd></>}
           {result.credential.validFrom && <><dt>Issued</dt><dd>{new Date(result.credential.validFrom).toLocaleDateString()}</dd></>}
         </dl>
@@ -442,7 +448,7 @@ function CredentialPage() {
                   <h1>{achievement?.name ?? 'Achievement credential'}</h1>
                   {subject?.name && <p className="recipient-name">Awarded to <strong>{subject.name}</strong></p>}
                   {achievement?.description && <p className="achievement-description">{achievement.description}</p>}
-                  <div className="issued-by">Issued by <strong>{issuer ?? 'Tasdiq issuer'}</strong>{credential.validFrom && <span>{new Date(credential.validFrom).toLocaleDateString()}</span>}</div>
+                  <div className="issued-by">Issued by <strong>{issuer ?? 'Credential issuer'}</strong>{credential.validFrom && <span>{new Date(credential.validFrom).toLocaleDateString()}</span>}</div>
                 </>
               )}
             </article>
@@ -467,7 +473,7 @@ function VerifyRoute() {
   return (
     <PortalLayout>
       <section className="verify-route">
-        <Link className="back-link" to="/">← Back to Tasdiq</Link>
+        <Link className="back-link" to="/">← Back to portal</Link>
         <h1>Credential verification</h1>
         <p>Check this credential against its issuer and current status.</p>
         <VerificationForm key={id} initialValue={id} />
@@ -477,7 +483,7 @@ function VerifyRoute() {
 }
 
 function NotFound() {
-  return <PortalLayout><section className="not-found"><span className="eyebrow">NOT FOUND</span><h1>This link has gone quiet.</h1><p>We couldn't find the page you were looking for.</p><Link className="button button-primary" to="/">Back to Tasdiq</Link></section></PortalLayout>
+  return <PortalLayout><section className="not-found"><span className="eyebrow">NOT FOUND</span><h1>This link has gone quiet.</h1><p>We couldn't find the page you were looking for.</p><Link className="button button-primary" to="/">Back to portal</Link></section></PortalLayout>
 }
 
 function AdminRoute() {
@@ -726,7 +732,7 @@ function RecipientManagementPage() {
               </button>
             </form>
             <form className="admin-form" onSubmit={(event) => void saveNameConsent(event)}>
-              <label>
+              <label className="consent-option">
                 <input
                   type="checkbox"
                   checked={maskedNameConsent}
@@ -736,7 +742,7 @@ function RecipientManagementPage() {
                 Allow a masked name on the public credential page
               </label>
               <p>For longer names, the first word is shown and later words are reduced to an initial plus three stars (for example, “Ahmad R*** S***”). Single-word or very short names are shown as initials only.</p>
-              <label>
+              <label className="consent-option">
                 <input
                   type="checkbox"
                   checked={fullNameConsent}

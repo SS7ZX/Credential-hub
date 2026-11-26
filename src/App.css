@@ -135,6 +135,8 @@
 .admin-form { display: flex; flex-direction: column; gap: 12px; }
 .admin-form label, .issuance-controls label { display: flex; flex-direction: column; gap: 6px; color: #536c5f; font-size: 10px; font-weight: 700; }
 .admin-form input, .admin-form select, .admin-form textarea, .issuance-controls select, .revoke-inline input, .org-switcher select { width: 100%; min-height: 39px; border: 1px solid #dfe7dd; border-radius: 6px; padding: 9px 10px; background: #fcfdf9; color: #294a3b; font-size: 12px; outline: none; }
+.admin-form .consent-option { flex-direction: row; align-items: flex-start; gap: 8px; line-height: 1.5; cursor: pointer; }
+.admin-form .consent-option input { width: auto; min-height: auto; margin: 2px 0 0; padding: 0; accent-color: #426a45; }
 .admin-form textarea { resize: vertical; }
 .admin-form input:focus, .admin-form select:focus, .admin-form textarea:focus, .issuance-controls select:focus, .revoke-inline input:focus { border-color: #9bab73; box-shadow: 0 0 0 3px #edf2e2; }
 .admin-form .button { align-self: flex-start; }

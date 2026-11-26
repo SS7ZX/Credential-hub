@@ -1,5 +1,6 @@
 import { corsHeaders, handleOptions, jsonResponse, rateLimit } from "../_shared/http.ts";
 import { toPublicJwk } from "../_shared/jwk.ts";
+import { getOrganizationDid } from "../_shared/site-config.ts";
 import { getAdminClient } from "../_shared/supabase.ts";
 
 Deno.serve(async (request) => {
@@ -11,7 +12,7 @@ Deno.serve(async (request) => {
     if (!await rateLimit(request, "did-document")) {
       return jsonResponse({ error: "Too many requests" }, 429);
     }
-    const did = Deno.env.get("ORGANIZATION_DID") ?? "did:web:tasdiqapp.com";
+    const did = getOrganizationDid();
     const client = getAdminClient();
     const { data, error } = await client
       .from("issuer_keys")

@@ -1,4 +1,4 @@
-const fallbackTitle = 'Digital credential | Tasdiq'
+const fallbackTitle = 'Digital credential | Credential Hub'
 const fallbackDescription = 'A shareable Open Badges 3.0 digital credential.'
 
 function escapeHtml(value: string): string {

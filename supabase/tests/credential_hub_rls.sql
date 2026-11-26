@@ -18,10 +18,10 @@ values
     ('10000000-0000-0000-0000-000000000007', 'authenticated', 'authenticated', 'unverified-owner@test.invalid', '', null, '{}', '{}', now(), now()),
     ('10000000-0000-0000-0000-000000000008', 'authenticated', 'authenticated', 'expired-member@test.invalid', '', now(), '{}', '{}', now(), now());
 
-insert into public.organizations (id, name, slug, created_by)
+insert into public.organizations (id, name, slug, did, created_by)
 values
-    ('20000000-0000-0000-0000-000000000001', 'Org A', 'org-a', '10000000-0000-0000-0000-000000000001'),
-    ('20000000-0000-0000-0000-000000000002', 'Org B', 'org-b', '10000000-0000-0000-0000-000000000005');
+    ('20000000-0000-0000-0000-000000000001', 'Org A', 'org-a', 'did:web:example.test', '10000000-0000-0000-0000-000000000001'),
+    ('20000000-0000-0000-0000-000000000002', 'Org B', 'org-b', 'did:web:example.test', '10000000-0000-0000-0000-000000000005');
 
 insert into public.organization_members (organization_id, user_id, role)
 values
@@ -54,7 +54,8 @@ values
 insert into public.recipients (id, organization_id, full_name, email, email_hash, salt)
 values
     ('60000000-0000-0000-0000-000000000001', '20000000-0000-0000-0000-000000000001', 'Recipient A', 'recipient-a@test.invalid', 'hash-a', 'salt-a'),
-    ('60000000-0000-0000-0000-000000000002', '20000000-0000-0000-0000-000000000002', 'Recipient B', 'recipient-b@test.invalid', 'hash-b', 'salt-b');
+    ('60000000-0000-0000-0000-000000000002', '20000000-0000-0000-0000-000000000002', 'Recipient B', 'recipient-b@test.invalid', 'hash-b', 'salt-b'),
+    ('60000000-0000-0000-0000-000000000003', '20000000-0000-0000-0000-000000000001', 'Recipient A2', 'recipient-a2@test.invalid', 'hash-a2', 'salt-a2');
 
 insert into public.issuance_batches (
     id, organization_id, event_id, achievement_id, created_by, total
@@ -68,8 +69,8 @@ insert into public.credentials (
     status, serial_number, issued_at, credential_json, jws, kid
 )
 values
-    ('80000000-0000-0000-0000-000000000001', '20000000-0000-0000-0000-000000000001', '70000000-0000-0000-0000-000000000001', '40000000-0000-0000-0000-000000000001', '60000000-0000-0000-0000-000000000001', 'issued', 'TSQ-A-000001', now(), '{}', 'test-a', 'key-a'),
-    ('80000000-0000-0000-0000-000000000002', '20000000-0000-0000-0000-000000000002', '70000000-0000-0000-0000-000000000002', '40000000-0000-0000-0000-000000000002', '60000000-0000-0000-0000-000000000002', 'revoked', 'TSQ-B-000001', now(), '{}', 'test-b', 'key-b');
+    ('80000000-0000-0000-0000-000000000001', '20000000-0000-0000-0000-000000000001', '70000000-0000-0000-0000-000000000001', '40000000-0000-0000-0000-000000000001', '60000000-0000-0000-0000-000000000001', 'issued', 'ORG-A-000001', now(), '{}', 'test-a', 'key-a'),
+    ('80000000-0000-0000-0000-000000000002', '20000000-0000-0000-0000-000000000002', '70000000-0000-0000-0000-000000000002', '40000000-0000-0000-0000-000000000002', '60000000-0000-0000-0000-000000000002', 'revoked', 'ORG-B-000001', now(), '{}', 'test-b', 'key-b');
 
 insert into public.issuance_rows (
     id, organization_id, batch_id, row_number, payload, idempotency_key,
@@ -106,6 +107,10 @@ values
 set local role authenticated;
 set local request.jwt.claims = '{"sub":"10000000-0000-0000-0000-000000000002","role":"authenticated"}';
 
+select throws_ok(
+    $$select * from private.credential_name_consent_events$$,
+    '42501', null, 'ordinary authenticated users cannot read consent events'
+);
 select is((select count(*)::int from public.organizations where id = '20000000-0000-0000-0000-000000000002'), 0, 'viewer cannot select another organization');
 select is((select count(*)::int from public.organization_members where organization_id = '20000000-0000-0000-0000-000000000002'), 0, 'viewer cannot select another tenant membership');
 select is((select count(*)::int from public.issuer_keys where organization_id = '20000000-0000-0000-0000-000000000002'), 0, 'viewer cannot select another tenant key');
@@ -201,6 +206,7 @@ select ok(
     and not has_table_privilege('authenticated', 'public.recipient_management_sessions', 'DELETE'),
     'authenticated clients cannot directly access recipient management tokens or sessions'
 );
+reset role;
 select ok(
     not has_table_privilege('authenticated', 'private.credential_name_consent_events', 'SELECT')
     and not has_table_privilege('authenticated', 'private.credential_name_consent_events', 'INSERT')
@@ -212,6 +218,9 @@ select ok(
     and not has_table_privilege('service_role', 'private.credential_name_consent_events', 'DELETE'),
     'ordinary users and service_role cannot directly access consent events'
 );
+set local role authenticated;
+set local request.jwt.claim.role = 'authenticated';
+set local request.jwt.claims = '{"sub":"10000000-0000-0000-0000-000000000002","role":"authenticated"}';
 select ok(
     not has_table_privilege('authenticated', 'public.issuance_rows', 'UPDATE')
     and not has_table_privilege('authenticated', 'public.credentials', 'UPDATE')
@@ -245,7 +254,7 @@ select throws_ok(
     '42501', null, 'viewer cannot insert organizations'
 );
 select throws_ok(
-    $$select public.create_organization('Viewer Org', 'viewer-org', '10000000-0000-0000-0000-000000000002')$$,
+    $$select public.create_organization('Viewer Org', 'viewer-org', 'did:web:example.test', '10000000-0000-0000-0000-000000000002')$$,
     '42501', null, 'authenticated users cannot self-provision organizations'
 );
 select throws_ok(
@@ -787,7 +796,7 @@ set local role service_role;
 set local request.jwt.claim.role = 'service_role';
 set local request.jwt.claims = '{"role":"service_role"}';
 select ok(
-    public.create_organization('Owner Allowlist Test', 'owner-allowlist-test', '10000000-0000-0000-0000-000000000001') is not null,
+    public.create_organization('Owner Allowlist Test', 'owner-allowlist-test', 'did:web:example.test', '10000000-0000-0000-0000-000000000001') is not null,
     'service_role can atomically provision an organization for the authorized owner'
 );
 select is(
@@ -798,6 +807,11 @@ select is(
        and m.role = 'owner'),
     1,
     'organization provisioning creates its owner membership'
+);
+select is(
+    (select did from public.organizations where slug = 'owner-allowlist-test'),
+    'did:web:example.test',
+    'organization provisioning stores the DID derived from the canonical site origin'
 );
 select is(
     (select count(*)::int from public.status_lists s
@@ -815,7 +829,7 @@ select is(
     'organization provisioning records an audit event'
 );
 select throws_ok(
-    $$select public.create_organization('Unverified Org', 'unverified-org', '10000000-0000-0000-0000-000000000007')$$,
+    $$select public.create_organization('Unverified Org', 'unverified-org', 'did:web:example.test', '10000000-0000-0000-0000-000000000007')$$,
     '42501', 'Verified user is required', 'organization provisioning rejects unverified owner accounts'
 );
 set local request.jwt.claim.role = 'authenticated';
@@ -1026,6 +1040,17 @@ select throws_ok(
     '23503', null, 'consent events cannot reference another tenant recipient'
 );
 select throws_ok(
+    $$insert into private.credential_name_consent_events(
+        organization_id, credential_id, recipient_id, scope, event_type, notice_version
+      ) values (
+        '20000000-0000-0000-0000-000000000001',
+        '80000000-0000-0000-0000-000000000001',
+        '60000000-0000-0000-0000-000000000003',
+        'masked', 'granted', 'credential-recipient-mismatch'
+      )$$,
+    '23503', null, 'consent events cannot reference another recipient in the same tenant'
+);
+select throws_ok(
     $$insert into public.verification_events(organization_id, credential_id, method, result)
       values ('20000000-0000-0000-0000-000000000001', '80000000-0000-0000-0000-000000000002', 'id', 'valid')$$,
     '23503', null, 'verification event cannot reference another tenant credential'
@@ -1041,6 +1066,16 @@ select lives_ok(
 select lives_ok(
     $$select public.redeem_recipient_access_token(repeat('f', 64), repeat('0', 64))$$,
     'recipient management link can be redeemed before anonymization'
+);
+select is(
+    public.get_credential_name_consent('81000000-0000-0000-0000-000000000001')->>'maskedNameConsent',
+    'false',
+    'masked-name consent is hidden by default'
+);
+select is(
+    public.get_credential_name_consent('81000000-0000-0000-0000-000000000001')->>'fullNameConsent',
+    'false',
+    'full-name consent is hidden by default'
 );
 select is(
     public.record_recipient_credential_name_consent(
@@ -1063,6 +1098,8 @@ select is(
     'true',
     'recipient session can grant masked-name consent again'
 );
+reset role;
+set local role postgres;
 select is(
     (select string_agg(event_type, ',' order by event_id)
      from private.credential_name_consent_events
@@ -1077,6 +1114,10 @@ select ok(
      where credential_id = '81000000-0000-0000-0000-000000000001'),
     'every consent event records a timestamp and notice version'
 );
+reset role;
+set local role service_role;
+set local request.jwt.claim.role = 'service_role';
+set local request.jwt.claims = '{"role":"service_role"}';
 select lives_ok(
     $$select public.record_recipient_credential_name_consent(
       repeat('0', 64), true, true, 'consent-test-v2'
@@ -1088,6 +1129,13 @@ select lives_ok(
       repeat('0', 64), true, false, 'consent-test-v2'
     )$$,
     'full name consent can be withdrawn independently'
+);
+select is(
+    (select count(*)::int from public.audit_logs
+     where entity_id = '81000000-0000-0000-0000-000000000001'
+       and action like 'recipient.name_consent.%'),
+    5,
+    'every consent grant and withdrawal is audit-logged'
 );
 reset role;
 

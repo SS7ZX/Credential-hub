@@ -7,9 +7,9 @@ import {
 Deno.test("buildCredential validates OB 3.0 and never includes recipient names", () => {
   const credential = buildCredential({
     id: "00000000-0000-4000-8000-000000000001",
-    issuerDid: "did:web:tasdiqapp.com",
-    issuerName: "Tasdiq",
-    issuerUrl: "https://tasdiqapp.com",
+    publicSiteUrl: "https://example.test",
+    issuerName: "Example Issuer",
+    issuerUrl: "https://example.test",
     validFrom: "2026-11-25T00:00:00.000Z",
     emailHash: "a".repeat(64),
     salt: "random-salt-value",
@@ -58,9 +58,9 @@ Deno.test("maskRecipientName preserves Unicode grapheme initials", () => {
 Deno.test("buildCredential never includes a recipient name, independent of consent", () => {
   const credential = buildCredential({
     id: "00000000-0000-4000-8000-000000000003",
-    issuerDid: "did:web:tasdiqapp.com",
-    issuerName: "Tasdiq",
-    issuerUrl: "https://tasdiqapp.com",
+    publicSiteUrl: "https://example.test",
+    issuerName: "Example Issuer",
+    issuerUrl: "https://example.test",
     validFrom: "2026-11-25T00:00:00.000Z",
     emailHash: "b".repeat(64),
     salt: "another-random-salt",

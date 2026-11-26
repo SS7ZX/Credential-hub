@@ -7,6 +7,7 @@ import {
   RequestBodyError,
 } from "../_shared/http.ts";
 import { authenticateRequest, getAdminClient } from "../_shared/supabase.ts";
+import { getOrganizationDid } from "../_shared/site-config.ts";
 
 const organizationSchema = z.object({
   name: z.string().trim().min(1).max(200)
@@ -36,6 +37,7 @@ Deno.serve(async (request) => {
     const { data, error } = await getAdminClient().rpc("create_organization", {
       p_name: input.name,
       p_slug: input.slug,
+      p_did: getOrganizationDid(),
       p_user_id: userId,
     });
     if (error) {
@@ -61,6 +63,7 @@ Deno.serve(async (request) => {
     }
     if (
       message === "Owner allowlist is not configured" ||
+      message === "PUBLIC_SITE_URL is not configured" ||
       message === "Supabase authentication configuration is incomplete"
     ) {
       console.error("create-organization configuration is incomplete");

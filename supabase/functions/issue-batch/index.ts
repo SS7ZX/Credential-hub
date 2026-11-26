@@ -1,5 +1,6 @@
 import { z } from "npm:zod@4";
 import { buildCredential, hashRecipientEmail } from "../_shared/credential.ts";
+import { getOrganizationDid, getPublicSiteUrl } from "../_shared/site-config.ts";
 import {
   handleOptions,
   jsonResponse,
@@ -164,6 +165,11 @@ async function processRows(request: Request, batchId: string, rows: RawRow[]) {
   }
 
   const signer = new EnvKeySigner();
+  const issuerDid = getOrganizationDid();
+  const publicSiteUrl = getPublicSiteUrl();
+  if (organization.did !== issuerDid) {
+    throw new Error("Organization issuer DID does not match PUBLIC_SITE_URL");
+  }
   const kid = signer.kid();
   const { data: keyRecord, error: keyError } = await admin
     .from("issuer_keys")
@@ -195,9 +201,9 @@ async function processRows(request: Request, batchId: string, rows: RawRow[]) {
       const validUntil = parseDate(input.expires_on, batch.options.expiresAt);
       const credential = buildCredential({
         id: credentialId,
-        issuerDid: organization.did as "did:web:tasdiqapp.com",
+        publicSiteUrl,
         issuerName: organization.name,
-        issuerUrl: organization.website_url ?? "https://tasdiqapp.com",
+        issuerUrl: organization.website_url ?? publicSiteUrl,
         ...(organization.logo_url ? { issuerImage: organization.logo_url } : {}),
         validFrom: issuedAt,
         ...(validUntil ? { validUntil } : {}),

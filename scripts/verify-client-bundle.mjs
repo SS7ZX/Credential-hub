@@ -24,7 +24,6 @@ const secretNames = [
   'CREDENTIAL_SIGNING_ALGORITHM',
   'CREDENTIAL_SIGNING_KEY_PKCS8',
   'CREDENTIAL_SIGNING_PUBLIC_KEY_SPKI',
-  'ORGANIZATION_DID',
 ]
 const forbiddenValues = secretNames
   .map((name) => [name, process.env[name]])

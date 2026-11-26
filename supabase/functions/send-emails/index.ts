@@ -158,7 +158,7 @@ async function sendInvitationEmail(
       body: JSON.stringify({
         from: configuration.from,
         to: [targetEmail],
-        subject: `Invitation to join ${invitation.organizationName} on Tasdiq`,
+        subject: `Invitation to join ${invitation.organizationName} on your credential portal`,
         text: `You have been invited to join ${invitation.organizationName} as ${invitation.role}. Accept the invitation using this secure link: ${actionLink}`,
         html: `<p>You have been invited to join <strong>${escapeHtml(invitation.organizationName)}</strong> as ${escapeHtml(invitation.role)}.</p><p><a href="${escapeHtml(actionLink)}">Accept your invitation</a></p><p>This link confirms the invited email address and expires according to the authentication provider's link policy. Organization invitations expire in seven days.</p>`,
       }),
@@ -329,7 +329,7 @@ Deno.serve(async (request) => {
           body: JSON.stringify({
             from,
             to: [targetEmail],
-            subject: "Your Tasdiq digital credential",
+            subject: "Your digital credential",
             text: `${recipientName ? `Hello ${recipientName},\n\n` : "Hello,\n\n"}Your digital credential is ready to view and share: ${shareUrl}\n\nManage its visibility using this one-time link (expires in 30 minutes): ${manageUrl}`,
             html: `<p>${greeting}</p><p>Your digital credential is ready to view and share.</p><p><a href="${escapeHtml(shareUrl)}">View your credential</a></p><p><a href="${escapeHtml(manageUrl)}">Manage credential visibility</a> (one-time link, expires in 30 minutes)</p>`,
           }),

@@ -7,7 +7,8 @@ import {
   RequestBodyError,
 } from "../_shared/http.ts";
 import { getAdminClient } from "../_shared/supabase.ts";
-import { maskRecipientName } from "../_shared/credential.ts";
+import { buildPublicCredential } from "../_shared/public-credential.ts";
+import { getPublicSiteUrl } from "../_shared/site-config.ts";
 
 const inputSchema = z.object({
   id: z.string().uuid(),
@@ -51,7 +52,7 @@ Deno.serve(async (request) => {
       return publicJsonResponse({
         revoked: true,
         credential: {
-          id: `https://tasdiqapp.com/credentials/${data.id}`,
+          id: `${getPublicSiteUrl()}/credentials/${data.id}`,
           type: ["VerifiableCredential", "OpenBadgeCredential"],
         },
       });
@@ -69,43 +70,13 @@ Deno.serve(async (request) => {
     }
 
     if (!storedCredential) return publicJsonResponse({ error: "Credential data is unavailable" }, 404);
-    const storedSubject = storedCredential.credentialSubject as Record<string, unknown> | undefined;
-    const identifier = storedSubject?.identifier;
-    const identity = Array.isArray(identifier) ? identifier[0] : identifier;
-    const achievement = storedSubject?.achievement as Record<string, unknown> | undefined;
     const { data: nameConsentData, error: nameConsentError } = await client.rpc(
       "get_credential_name_consent",
       { p_credential_id: input.id },
     );
     if (nameConsentError) throw new Error("Could not load recipient name consent");
     const nameConsent = nameConsentSchema.parse(nameConsentData);
-    const publicName = nameConsent.fullNameConsent
-      ? nameConsent.fullName?.trim() || undefined
-      : nameConsent.maskedNameConsent && nameConsent.fullName
-      ? maskRecipientName(nameConsent.fullName)
-      : undefined;
-    const publicSubject = {
-      ...(storedSubject?.type ? { type: storedSubject.type } : {}),
-      ...(identity && typeof identity === "object"
-        ? {
-          identifier: {
-            type: "IdentityObject",
-            hashed: true,
-            identityHash: (identity as Record<string, unknown>).identityHash,
-            identityType: (identity as Record<string, unknown>).identityType,
-            salt: (identity as Record<string, unknown>).salt,
-          },
-        }
-        : {}),
-      ...(achievement ? { achievement } : {}),
-      ...(publicName ? { name: publicName } : {}),
-    };
-    const credential = Object.fromEntries(
-      ["@context", "id", "type", "issuer", "validFrom", "validUntil", "name", "description", "image"]
-        .filter((key) => key in storedCredential)
-        .map((key) => [key, storedCredential[key]]),
-    );
-    credential.credentialSubject = publicSubject;
+    const credential = buildPublicCredential(storedCredential, nameConsent);
     return publicJsonResponse({ credential });
   } catch (error) {
     if (error instanceof RequestBodyError) {

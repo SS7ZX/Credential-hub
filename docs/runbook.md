@@ -10,7 +10,7 @@ This runbook is for a dedicated **staging** Supabase project and Vercel Preview 
 2. From the repository root, run `npm run keygen`. The script prints PKCS#8 private-key and SPKI public-key PEM material, a `kid`, and the algorithm. Its output is sensitive.
 3. Capture the output directly into an approved secrets manager or password manager. Do not redirect it to a file in the repository, commit it, paste it into chat/tickets, or leave it in shell history or terminal recordings.
 4. Make an encrypted offline backup of the staging private key and record its `kid`. Keep the backup separate from the workstation. The production key must be generated and backed up separately; do not reuse this staging key.
-5. Add the staging public key to the staging `issuer_keys` data using the existing owner workflow. Before issuing, verify that the DID in the credential resolves to a DID document/JWKS containing this exact staging key and `kid`. The approved production DID `did:web:tasdiqapp.com` must not be paired with a different staging key unless its resolver is intentionally configured for that key. Otherwise, use a separately configured staging DID; never publish the staging key through production.
+5. Add the staging public key to the staging `issuer_keys` data using the existing owner workflow. Before issuing, verify that the DID derived from the staging `PUBLIC_SITE_URL` resolves to a DID document/JWKS containing this exact staging key and `kid`. Never pair a staging key with the production domain or publish the staging key through production.
 
 If the key output may have been exposed, do not use it. Generate a replacement and remove the exposed copy according to the organization's secret-handling policy.
 
@@ -19,7 +19,7 @@ If the key output may have been exposed, do not use it. Generate a replacement a
 Use the Supabase Dashboard's Edge Function secrets for server-side values. Use Vercel's **Preview** environment for the staging front end. Do not set staging values in Vercel Production. Set the following in the staging Edge Function environment:
 
 - Required: `ISSUER_OWNER_EMAIL`, `RESEND_API_KEY`, `RESEND_FROM_EMAIL`, `RESEND_DAILY_PLAN_LIMIT`, `RESEND_SANDBOX`, `RESEND_SANDBOX_TO`, `PUBLIC_SITE_URL`, `RATE_LIMIT_HASH_SECRET`, `CREDENTIAL_SIGNING_KID`, `CREDENTIAL_SIGNING_ALGORITHM`, `CREDENTIAL_SIGNING_KEY_PKCS8`, and `CREDENTIAL_SIGNING_PUBLIC_KEY_SPKI`.
-- Set `ORGANIZATION_DID` only if deliberately overriding the default `did:web:tasdiqapp.com`; the DID value itself is public metadata.
+- `PUBLIC_SITE_URL` is the single canonical origin. Credential and achievement URLs and the `did:web` identifier are derived from it; there is no separate issuer-domain setting.
 - Supabase injects `SUPABASE_URL`, `SUPABASE_ANON_KEY`, and `SUPABASE_SERVICE_ROLE_KEY` for Edge Functions. Do not copy the service-role key into Vercel or a `VITE_` variable.
 - Keep `RESEND_SANDBOX=true` and set `RESEND_SANDBOX_TO` to a staging-controlled mailbox. Do not enable live sending until the owner has configured and verified the sending domain and tested the daily quota.
 
@@ -44,13 +44,12 @@ The local credential-validation script takes `STAGING_SUPABASE_URL`, `STAGING_SU
 | `RESEND_DAILY_PLAN_LIMIT` | Supabase Edge Function configuration | Email function and authorized project operators | **Never** |
 | `RESEND_SANDBOX` | Supabase Edge Function configuration | Email function and authorized project operators | **Never** |
 | `RESEND_SANDBOX_TO` | Supabase Edge Function configuration | Email function and authorized project operators | **Never** |
-| `PUBLIC_SITE_URL` | Supabase Edge Function configuration for links/callbacks | Functions and authorized project operators | No; server-side configuration |
+| `PUBLIC_SITE_URL` | Supabase Edge Function configuration; canonical credential origin and `did:web` host | Functions and authorized project operators | No; keep configuration server-side |
 | `RATE_LIMIT_HASH_SECRET` | Supabase Edge Function secret | Functions that hash rate-limit identifiers; authorized project operators | **Never** |
 | `CREDENTIAL_SIGNING_KID` | Supabase Edge Function configuration | Issuance functions and authorized project operators | No as an environment variable; the `kid` is public in signed JWT headers/public key metadata |
 | `CREDENTIAL_SIGNING_ALGORITHM` | Supabase Edge Function configuration | Issuance functions and authorized project operators | No as an environment variable; the algorithm is public metadata |
 | `CREDENTIAL_SIGNING_KEY_PKCS8` | Supabase Edge Function secret; private signing key | Issuance functions and authorized project operators with secret access | **Never** |
 | `CREDENTIAL_SIGNING_PUBLIC_KEY_SPKI` | Supabase Edge Function configuration; public-key encoding | Functions and authorized project operators | No as an environment variable; the public key may be published as a JWK |
-| `ORGANIZATION_DID` | Optional Supabase Edge Function configuration | Functions and authorized project operators | No as an environment variable; the DID is intentionally public in credentials and DID documents |
 | `STAGING_SUPABASE_URL` | One-off local validation process | Operator running the validation | No |
 | `STAGING_SUPABASE_ANON_KEY` | One-off local validation process | Operator running the validation; public key by design | No |
 | `STAGING_PROJECT_REF` | One-off local validation process; target guard | Operator running the validation | No |
@@ -70,12 +69,13 @@ The disabled SendGrid and placeholder secret entries in `supabase/config.toml` a
 2. **Validate locally first.** Start the local Supabase stack (Docker is needed only for these local database checks; no VPS is required), then run `npx supabase db reset`, `npx supabase test db`, `npm test`, `npm run lint`, `npm run typecheck`, and `npm run build`. A local reset is destructive to the local Supabase database only; never use `db reset` against a hosted project.
 3. **Configure Supabase Auth.** Set staging Site URL and exact redirect URLs. Keep email confirmation enabled. Create/verify the staging owner account; use a staging-only owner email and `ISSUER_OWNER_EMAIL`.
 4. **Configure staging secrets.** Set Edge Function values in the staging Supabase project. Keep email sandbox mode on. Confirm the staging `PUBLIC_SITE_URL` and `RESEND_SANDBOX_TO`.
-5. **Apply schema to staging only.** Link explicitly to the staging project (`npx supabase link --project-ref <STAGING_PROJECT_REF>`), inspect the linked project identity, and review `npx supabase db push --linked --dry-run`. Only if the target and migration list are correct, apply with `npx supabase db push --linked`. This command changes the linked hosted project. Do not run `db push --remote`; do not proceed if the ref is ambiguous or production.
-6. **Initialize the staging issuer key.** Generate a separate staging key, store the private key in the staging Edge Function secrets, register only its public key through the owner workflow, then verify the DID/JWKS public key and `kid`.
-7. **Deploy Edge Functions.** Deploy the functions from this revision to staging after the schema and secrets are ready. Keep the existing per-function JWT settings; verify owner/member checks and public-endpoint rate limits.
-8. **Deploy the web app as a Vercel Preview.** Set only the staging `VITE_SUPABASE_URL` and `VITE_SUPABASE_ANON_KEY` in Preview, then deploy. Do not change Vercel Production variables or promote the Preview deployment.
-9. **Run the E2E checklist.** Use only test identities and a sandbox-controlled inbox. Complete the credential validation script against the staging URL after issuing a credential.
-10. **Record evidence.** Record commit/deployment identifiers, staging project ref, test outcomes, and any defects. Do not record private keys, auth tokens, recipient PII, raw recipient links, or full credential JWTs.
+5. **Validate the site identity.** Export the same staging `PUBLIC_SITE_URL` into the deployment shell and run `npm run predeploy:check`. The script rejects missing, placeholder, canary, invalid, non-HTTPS, or mismatched DID/site-host configuration.
+6. **Apply schema to staging only.** Link explicitly to the staging project (`npx supabase link --project-ref <STAGING_PROJECT_REF>`), inspect the linked project identity, and review `npx supabase db push --linked --dry-run`. Only if the target and migration list are correct, apply with `npx supabase db push --linked`. This command changes the linked hosted project. Do not run `db push --remote`; do not proceed if the ref is ambiguous or production.
+7. **Initialize the staging issuer key.** Generate a separate staging key, store the private key in the staging Edge Function secrets, register only its public key through the owner workflow, then verify the DID/JWKS public key and `kid`.
+8. **Deploy Edge Functions.** Deploy the functions from this revision to staging after the schema and secrets are ready. Keep the existing per-function JWT settings; verify owner/member checks and public-endpoint rate limits.
+9. **Deploy the web app as a Vercel Preview.** Set only the staging `VITE_SUPABASE_URL` and `VITE_SUPABASE_ANON_KEY` in Preview, then deploy. Do not change Vercel Production variables or promote the Preview deployment.
+10. **Run the E2E checklist.** Use only test identities and a sandbox-controlled inbox. Complete the credential validation script against the staging URL after issuing a credential.
+11. **Record evidence.** Record commit/deployment identifiers, staging project ref, test outcomes, and any defects. Do not record private keys, auth tokens, recipient PII, raw recipient links, or full credential JWTs.
 
 ### Browser bundle leak check
 

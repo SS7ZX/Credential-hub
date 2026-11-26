@@ -1,12 +1,12 @@
-# Tasdiq Credential Hub
+# Credential Hub
 
-Tasdiq issues and verifies Open Badges 3.0 credentials using VC-JWT proofs. The public portal is a React SPA; Supabase Edge Functions handle signing, verification, and all credential email delivery. Issuer private keys stay in server-side environment secrets.
+Credential Hub issues and verifies Open Badges 3.0 credentials using VC-JWT proofs. The public portal is a React SPA; Supabase Edge Functions handle signing, verification, and all credential email delivery. Issuer private keys stay in server-side environment secrets.
 
 ## Local setup
 
 1. Copy `.env.example` to `.env.local` and set the public Supabase values plus the server-side secrets required by the local functions.
 2. Install the locked dependencies with `npm ci`.
-3. Run the portal with `npm run dev`, or validate it with `npm run build`, `npm run lint`, and `npm test`.
+3. Run the portal with `npm run dev`, or validate it with `npm run build`, `npm run lint`, and `npm test`. Before deployment, set `PUBLIC_SITE_URL` in the environment and run `npm run predeploy:check`; HTTP localhost is accepted only with `NODE_ENV=development`.
 4. Install Deno 2 to validate Edge Functions with `deno task test:functions` and `deno task check:functions`.
 5. Local database and Edge Function development require Docker Desktop with its engine running. Run `npx supabase db reset` and `npx supabase test db` only against the local Supabase stack.
 
@@ -17,7 +17,7 @@ No remote database command is required for frontend development. Do not run `sup
 The owner should generate the signing key on a trusted machine and retain an offline backup. This command generates a fresh Ed25519 key pair; it does not persist the private key in the repository:
 
 ```powershell
-npm run keygen -- tasdiq-2026-01
+npm run keygen -- issuer-2026-01
 ```
 
 The script prints the private PKCS#8 key, corresponding public SPKI key, key ID, and public JWK. Set the private/public PEM values and key ID as Supabase Edge Function secrets; register only the public JWK in `issuer_keys.public_jwk`. Treat the command output as secret material and do not paste it into source control, issues, or chat.

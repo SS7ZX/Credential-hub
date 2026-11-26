@@ -10,6 +10,7 @@ import {
   CredentialVerificationError,
   verifyCredentialJwt,
 } from "../_shared/verify.ts";
+import { getPublicSiteUrl } from "../_shared/site-config.ts";
 
 const inputSchema = z.object({
   id: z.string().uuid().optional(),
@@ -32,8 +33,8 @@ Deno.serve(async (request) => {
 
     if (input.url) {
       const url = new URL(input.url);
-      if (url.protocol !== "https:" || url.hostname !== "tasdiqapp.com") {
-        return jsonResponse({ error: "Only Tasdiq verification URLs are accepted" }, 400);
+      if (url.origin !== getPublicSiteUrl()) {
+        return jsonResponse({ error: "Only configured verification URLs are accepted" }, 400);
       }
       const match = url.pathname.match(/^\/verify\/([0-9a-f-]{36})$/i);
       if (!match) return jsonResponse({ error: "Unsupported verification URL" }, 400);
@@ -58,7 +59,7 @@ Deno.serve(async (request) => {
             { name: "revocation", passed: false, detail: "Credential has been revoked and its recipient data was deleted" },
           ],
           summary: "Credential was revoked; recipient data has been deleted",
-          credential: { id: `https://tasdiqapp.com/credentials/${credentialId}` },
+          credential: { id: `${getPublicSiteUrl()}/credentials/${credentialId}` },
         });
       }
       if (!data.jws) return jsonResponse({ error: "Credential data is unavailable" }, 404);

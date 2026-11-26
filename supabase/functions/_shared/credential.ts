@@ -2,11 +2,12 @@ import { Ajv2019 } from "npm:ajv@8.17.1/dist/2019.js";
 import * as addFormatsModule from "npm:ajv-formats@3.0.1";
 import type { FormatsPlugin } from "npm:ajv-formats@3.0.1";
 import { z } from "npm:zod@4";
+import { getOrganizationDid } from "./site-config.ts";
 import schema from "./ob_v3p0_achievementcredential_schema.json" with { type: "json" };
 
 export const credentialInputSchema = z.object({
   id: z.string().uuid(),
-  issuerDid: z.literal("did:web:tasdiqapp.com"),
+  publicSiteUrl: z.url(),
   issuerName: z.string().trim().min(1).max(200),
   issuerUrl: z.url(),
   issuerImage: z.url().optional(),
@@ -67,6 +68,8 @@ export function maskRecipientName(fullName: string): string | undefined {
 }
 
 export function buildCredential(input: CredentialInput): Record<string, unknown> {
+  const publicSiteUrl = new URL(input.publicSiteUrl).origin;
+  const issuerDid = getOrganizationDid(publicSiteUrl);
   const subject: Record<string, unknown> = {
     type: "AchievementSubject",
     identifier: {
@@ -77,7 +80,7 @@ export function buildCredential(input: CredentialInput): Record<string, unknown>
       salt: input.salt,
     },
     achievement: {
-      id: `https://tasdiqapp.com/achievements/${input.achievement.id}`,
+      id: `${publicSiteUrl}/achievements/${input.achievement.id}`,
       type: "Achievement",
       name: input.achievement.name,
       description: input.achievement.description,
@@ -91,10 +94,10 @@ export function buildCredential(input: CredentialInput): Record<string, unknown>
       "https://www.w3.org/ns/credentials/v2",
       "https://purl.imsglobal.org/spec/ob/v3p0/context-3.0.3.json",
     ],
-    id: `https://tasdiqapp.com/credentials/${input.id}`,
+    id: `${publicSiteUrl}/credentials/${input.id}`,
     type: ["VerifiableCredential", "OpenBadgeCredential"],
     issuer: {
-      id: input.issuerDid,
+      id: issuerDid,
       type: "Profile",
       name: input.issuerName,
       url: input.issuerUrl,

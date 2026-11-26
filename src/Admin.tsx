@@ -24,7 +24,7 @@ function messageOf(error: unknown): string {
 function AdminHeader() {
   return (
     <header className="topbar">
-      <Link className="brand" to="/"><span className="brand-mark">t</span><span>tasdiq</span></Link>
+      <Link className="brand" to="/"><span className="brand-mark">t</span><span>credential hub</span></Link>
       <Link className="nav-link" to="/">Public credential portal <span aria-hidden="true">↗</span></Link>
     </header>
   )
