@@ -543,10 +543,12 @@ export default function Admin({ session, onSignOut }: { session: Session; onSign
     setBusy(true)
     setError('')
     try {
-      const { error: rpcError } = await supabase.rpc('anonymize_recipient', { p_recipient_id: recipientId })
-      if (rpcError) throw rpcError
+      const { error: functionError } = await supabase.functions.invoke('anonymize-recipient', {
+        body: { recipientId },
+      })
+      if (functionError) throw functionError
       setAnonymizeId('')
-      setMessage('Recipient data removed. Associated credentials were revoked and their IDs retained.')
+      setMessage('Recipient data removed, credentials revoked, and stored stamped PDFs deleted.')
       await loadDashboard(organization.id, dashboardRole)
     } catch (cause) {
       setError(messageOf(cause))

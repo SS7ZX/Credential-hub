@@ -469,8 +469,18 @@ select throws_ok(
     'P0001', 'Insufficient organization role', 'issuer cannot revoke'
 );
 select throws_ok(
-    $$select public.anonymize_recipient('60000000-0000-0000-0000-000000000001')$$,
-    'P0001', 'Insufficient organization role', 'issuer cannot anonymize recipients'
+    $$select public.prepare_recipient_anonymization(
+      '10000000-0000-0000-0000-000000000003',
+      '60000000-0000-0000-0000-000000000001'
+    )$$,
+    '42501', null, 'authenticated users cannot bypass Storage cleanup for anonymization'
+);
+select throws_ok(
+    $$select public.complete_recipient_anonymization(
+      '10000000-0000-0000-0000-000000000003',
+      '60000000-0000-0000-0000-000000000001'
+    )$$,
+    '42501', null, 'authenticated users cannot bypass final anonymization'
 );
 select throws_ok(
     $$select public.set_credential_visibility('80000000-0000-0000-0000-000000000001', 'public')$$,
@@ -1139,11 +1149,21 @@ select is(
 );
 reset role;
 
-set local role authenticated;
-set local request.jwt.claims = '{"sub":"10000000-0000-0000-0000-000000000001","role":"authenticated"}';
+set local role service_role;
+set local request.jwt.claims = '{"role":"service_role"}';
 select lives_ok(
-    $$select public.anonymize_recipient((select id from public.recipients where email = 'new@test.invalid'))$$,
-    'owner can anonymize a recipient'
+    $$select public.prepare_recipient_anonymization(
+      '10000000-0000-0000-0000-000000000001',
+      (select id from public.recipients where email = 'new@test.invalid')
+    )$$,
+    'service-side preparation verifies owner role and stages Storage cleanup'
+);
+select lives_ok(
+    $$select public.complete_recipient_anonymization(
+      '10000000-0000-0000-0000-000000000001',
+      (select id from public.recipients where email = 'new@test.invalid')
+    )$$,
+    'server finalizes anonymization after Storage cleanup'
 );
 select ok(
     (select full_name is null and email is null and email_hash is null and salt is null
