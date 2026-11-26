@@ -173,6 +173,23 @@
 .admin-reload { margin: 8px 0; padding: 9px 0; }
 .admin-login { max-width: 450px; min-height: 75vh; display: flex; flex-direction: column; justify-content: center; margin: 0 auto; }
 .admin-login .admin-form { margin-top: 22px; padding: 25px; }
+.stamping-panel { margin: 15px 0; }
+.stamping-field { display: flex; flex-direction: column; gap: 6px; color: #536c5f; font-size: 10px; font-weight: 700; }
+.stamping-field input, .stamping-field select, .stamping-page-nav select { min-height: 37px; border: 1px solid #dfe7dd; border-radius: 6px; padding: 8px 10px; background: #fcfdf9; color: #294a3b; font-size: 11px; }
+.stamping-field small, .stamping-note { color: #78877e; font-size: 10px; line-height: 1.6; }
+.stamping-section-heading { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin: 14px 0; color: #355444; font-size: 11px; }
+.stamping-section-heading span { color: #728278; font-size: 10px; }
+.stamping-sample-upload { margin: 14px 0; }
+.stamping-preview-area { margin: 16px 0; }
+.stamping-canvas-wrap { position: relative; display: block; width: min(100%, 760px); margin: 0 auto; overflow: hidden; border: 1px solid #dfe7dd; background: #f7f8f4; line-height: 0; }
+.stamping-canvas-wrap canvas { display: block; width: 100%; height: 100%; cursor: crosshair; }
+.stamping-qr-overlay { position: absolute; z-index: 1; border: 1px solid #54715c; background: #fff; object-fit: fill; pointer-events: none; }
+.stamping-id-overlay { position: absolute; z-index: 2; display: flex; flex-direction: column; justify-content: center; gap: 3px; overflow: hidden; color: #17241d; font-size: clamp(5px, .75vw, 9px); font-weight: 600; line-height: 1.2; text-shadow: 0 0 2px #fff, 0 0 2px #fff; pointer-events: none; }
+.stamping-id-overlay strong, .stamping-id-overlay span { white-space: nowrap; }
+.stamping-page-nav { display: flex; align-items: center; gap: 15px; margin-top: 10px; color: #75847a; font-size: 10px; }
+.stamping-page-nav label { display: flex; align-items: center; gap: 6px; color: #536c5f; font-weight: 700; }
+.stamping-page-nav select { min-height: 30px; padding: 4px 8px; }
+.stamping-fields { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 12px; margin: 14px 0; }
 
 @media (max-width: 760px) {
   .portal { width: min(100% - 36px, 580px); }
@@ -207,6 +224,8 @@
   .revoke-inline input { flex: 1; width: auto; min-width: 100px; }
   .member-add-form { grid-template-columns: 1fr; }
   .org-banner { align-items: flex-start; flex-direction: column; gap: 5px; }
+  .stamping-fields { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .stamping-section-heading, .stamping-page-nav { align-items: flex-start; flex-direction: column; }
 }
 
 @media (prefers-reduced-motion: reduce) {

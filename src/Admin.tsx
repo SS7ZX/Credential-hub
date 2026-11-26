@@ -3,6 +3,7 @@ import { Link } from 'react-router-dom'
 import Papa from 'papaparse'
 import type { Session } from '@supabase/supabase-js'
 import { supabase } from './lib/supabase'
+import DriveStamping from './features/stamping/DriveStamping'
 
 type Organization = { id: string; name: string; slug: string }
 type Membership = { role: 'owner' | 'admin' | 'issuer' | 'viewer'; organizations: Organization }
@@ -655,6 +656,14 @@ export default function Admin({ session, onSignOut }: { session: Session; onSign
             {csvName && <span className="csv-summary">{csvName} · {rows.length} rows ready</span>}
             <button className="button button-primary" disabled={busy || !rows.length || !selectedEvent || !selectedAchievement} onClick={() => void issueCsv()}>{busy ? 'Processing…' : `Issue ${rows.length || ''} credentials`}</button>
           </section>
+        )}
+
+        {canIssue && organization && (
+          <DriveStamping
+            organizationId={organization.id}
+            events={events}
+            achievements={achievements}
+          />
         )}
 
         <section className="admin-card batch-card"><span className="eyebrow">ISSUANCE HISTORY</span><h2>Recent batches</h2>
