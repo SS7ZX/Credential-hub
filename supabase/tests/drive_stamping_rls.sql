@@ -69,6 +69,14 @@ select is(
     false,
     'stamped PDF bucket is private'
 );
+select is(
+    (select count(*)::int from pg_policies
+     where schemaname = 'storage'
+       and tablename = 'objects'
+       and cmd in ('INSERT', 'UPDATE', 'DELETE')),
+    0,
+    'authenticated users have no stamped PDF write policies'
+);
 
 set local role anon;
 set local request.jwt.claims = '{"role":"anon"}';
@@ -131,6 +139,11 @@ reset role;
 
 set local role authenticated;
 set local request.jwt.claims = '{"sub":"11000000-0000-0000-0000-000000000002","role":"authenticated"}';
+select throws_ok(
+    $$insert into storage.objects(bucket_id, name, metadata)
+      values ('stamped-certificate-pdfs', 'arbitrary/upload.pdf', '{}'::jsonb)$$,
+    '42501', null, 'authenticated issuers cannot upload arbitrary stamped PDFs'
+);
 select lives_ok(
     $$select public.save_qr_layout(
       '21000000-0000-0000-0000-000000000001',
