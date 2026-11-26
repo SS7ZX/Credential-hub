@@ -1,6 +1,6 @@
 import { z } from "npm:zod@4";
 import {
-  corsHeaders,
+  corsHeadersForFunction,
   handleOptions,
   jsonResponse,
   rateLimit,
@@ -10,6 +10,8 @@ import {
 import { getAdminClient } from "../_shared/supabase.ts";
 import { buildPublicCredential } from "../_shared/public-credential.ts";
 import { getPublicSiteUrl } from "../_shared/site-config.ts";
+
+const responseCorsHeaders = corsHeadersForFunction("get-credential");
 
 const inputSchema = z.object({
   id: z.string().uuid(),
@@ -23,17 +25,17 @@ const nameConsentSchema = z.object({
 }).strict();
 
 function publicJsonResponse(body: unknown, status = 200): Response {
-  return jsonResponse(body, status, { "Cache-Control": "no-store" });
+  return jsonResponse(body, status, { ...responseCorsHeaders, "Cache-Control": "no-store" });
 }
 
 Deno.serve(async (request) => {
-  const options = handleOptions(request);
+  const options = handleOptions(request, responseCorsHeaders);
   if (options) return options;
-  if (request.method !== "POST") return jsonResponse({ error: "Method not allowed" }, 405);
+  if (request.method !== "POST") return jsonResponse({ error: "Method not allowed" }, 405, responseCorsHeaders);
 
   try {
     if (!await rateLimit(request, "get-credential")) {
-      return jsonResponse({ error: "Too many requests" }, 429);
+      return jsonResponse({ error: "Too many requests" }, 429, responseCorsHeaders);
     }
     const input = inputSchema.parse(await readJson(request));
     const client = getAdminClient();
@@ -63,7 +65,7 @@ Deno.serve(async (request) => {
       if (!data.jws) return publicJsonResponse({ error: "Credential JWT is unavailable" }, 404);
       return new Response(data.jws, {
         headers: {
-          ...corsHeaders,
+          ...responseCorsHeaders,
           "Content-Type": "application/vc+jwt",
           "Cache-Control": "no-store",
         },
@@ -81,10 +83,10 @@ Deno.serve(async (request) => {
     return publicJsonResponse({ credential });
   } catch (error) {
     if (error instanceof RequestBodyError) {
-      return jsonResponse({ error: error.message }, error.status);
+      return jsonResponse({ error: error.message }, error.status, responseCorsHeaders);
     }
-    if (error instanceof z.ZodError) return jsonResponse({ error: "Invalid request" }, 400);
+    if (error instanceof z.ZodError) return jsonResponse({ error: "Invalid request" }, 400, responseCorsHeaders);
     console.error("get-credential failed", error);
-    return jsonResponse({ error: "Credential is temporarily unavailable" }, 503);
+    return jsonResponse({ error: "Credential is temporarily unavailable" }, 503, responseCorsHeaders);
   }
 });

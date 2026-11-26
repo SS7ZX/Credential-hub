@@ -33,6 +33,14 @@
   ],
   "rewrites": [
     {
+      "source": "/.well-known/did.json",
+      "destination": "/api/issuer-discovery?document=did"
+    },
+    {
+      "source": "/.well-known/jwks.json",
+      "destination": "/api/issuer-discovery?document=jwks"
+    },
+    {
       "source": "/(.*)",
       "destination": "/index.html"
     }

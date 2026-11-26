@@ -9,6 +9,16 @@ export const corsHeaders = {
   "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type",
   "Access-Control-Allow-Methods": "GET, POST, OPTIONS",
 };
+export const publicCorsHeaders = {
+  ...corsHeaders,
+  "Access-Control-Allow-Origin": "*",
+};
+
+const wildcardCorsFunctions = new Set(["did-document", "public-keys", "get-credential"]);
+
+export function corsHeadersForFunction(functionName: string) {
+  return wildcardCorsFunctions.has(functionName) ? publicCorsHeaders : corsHeaders;
+}
 
 export function jsonResponse(body: unknown, status = 200, headers: HeadersInit = {}): Response {
   return new Response(JSON.stringify(body), {
@@ -21,9 +31,9 @@ export function jsonResponse(body: unknown, status = 200, headers: HeadersInit =
   });
 }
 
-export function handleOptions(request: Request): Response | null {
+export function handleOptions(request: Request, headers: HeadersInit = corsHeaders): Response | null {
   return request.method === "OPTIONS"
-    ? new Response("ok", { headers: corsHeaders })
+    ? new Response("ok", { headers })
     : null;
 }
 

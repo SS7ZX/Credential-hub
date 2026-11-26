@@ -1,6 +1,6 @@
-import { corsHeaders, readJson, RequestBodyError } from "./http.ts";
+import { corsHeaders, corsHeadersForFunction, handleOptions, publicCorsHeaders, readJson, RequestBodyError } from "./http.ts";
 
-Deno.test("Edge Function CORS allows only the configured public site origin", () => {
+Deno.test("site-restricted Edge Function CORS allows only the configured public site origin", () => {
   const configuredOrigin = Deno.env.get("PUBLIC_SITE_URL") ?? "http://localhost:5173";
   const expectedOrigin = new URL(configuredOrigin).origin;
   if (corsHeaders["Access-Control-Allow-Origin"] !== expectedOrigin) {
@@ -8,6 +8,43 @@ Deno.test("Edge Function CORS allows only the configured public site origin", ()
   }
   if (corsHeaders["Access-Control-Allow-Origin"] === "*") {
     throw new Error("Wildcard CORS is not allowed");
+  }
+});
+
+Deno.test("only public issuer read functions use wildcard CORS without credentials", () => {
+  const publicFunctions = ["did-document", "public-keys", "get-credential"];
+  const restrictedFunctions = [
+    "verify-credential",
+    "manage-recipient-credential",
+    "issue-batch",
+    "generate-pdf",
+    "create-organization",
+    "send-emails",
+    "accept-organization-invitation",
+    "list-drive-folder",
+    "preview-drive-file",
+    "stamp-one-file",
+    "finalize-run",
+    "anonymize-recipient",
+  ];
+
+  for (const name of publicFunctions) {
+    if (corsHeadersForFunction(name)["Access-Control-Allow-Origin"] !== "*") {
+      throw new Error(`${name} must allow public read-only browser access`);
+    }
+  }
+  for (const name of restrictedFunctions) {
+    if (corsHeadersForFunction(name)["Access-Control-Allow-Origin"] !== corsHeaders["Access-Control-Allow-Origin"]) {
+      throw new Error(`${name} must restrict browser access to PUBLIC_SITE_URL`);
+    }
+  }
+  if ("Access-Control-Allow-Credentials" in publicCorsHeaders) {
+    throw new Error("Wildcard CORS must not allow credentials");
+  }
+
+  const preflight = handleOptions(new Request("https://edge.test", { method: "OPTIONS" }), publicCorsHeaders);
+  if (preflight?.headers.get("Access-Control-Allow-Origin") !== "*") {
+    throw new Error("Public endpoint preflight did not use wildcard CORS");
   }
 });
 
