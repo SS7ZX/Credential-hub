@@ -218,6 +218,7 @@
 .stamping-history-row strong, .stamping-history-row small { display: block; }
 .stamping-history-row strong { color: #375845; font-size: 10px; }
 .stamping-history-row small { margin-top: 4px; color: #829087; font-size: 9px; }
+.stamping-downloads { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 12px; }
 
 @media (max-width: 760px) {
   .portal { width: min(100% - 36px, 580px); }

@@ -7,7 +7,7 @@ import {
   GoogleDriveError,
 } from "../_shared/google-drive.ts";
 import { handleOptions, jsonResponse, readJson, RequestBodyError } from "../_shared/http.ts";
-import { StampPdfError, stampPdf, type QrLayout } from "../_shared/stamping-pdf.ts";
+import { StampPdfError, sha256PdfBytes, stampPdf, type QrLayout } from "../_shared/stamping-pdf.ts";
 import { authenticateRequest, getAdminClient, requireOrganizationRole } from "../_shared/supabase.ts";
 import { getPublicSiteUrl } from "../_shared/site-config.ts";
 
@@ -73,6 +73,18 @@ Deno.serve(async (request) => {
     const driveFile = await getDriveFileMetadata(stampFile.drive_file_id, token);
     await assertDriveFileInFolderTree(driveFile, run.drive_folder_id, token);
     const source = await downloadDrivePdf(driveFile, token);
+    const sourceSha256 = await sha256PdfBytes(source);
+    const { data: claimData, error: claimError } = await userClient.rpc("claim_stamp_file", {
+      p_stamp_file_id: stampFile.id,
+      p_source_sha256: sourceSha256,
+    });
+    if (claimError) throw new Error("stamp_claim_rejected");
+    claimed = true;
+    const claim = claimData as { storagePath?: unknown; attemptCount?: unknown } | null;
+    if (claim?.storagePath !== stampFile.storage_path) {
+      throw new Error("stamp_claim_response_invalid");
+    }
+
     const maxPages = getMaxPageCount();
     const result = await stampPdf(
       source,
@@ -82,16 +94,8 @@ Deno.serve(async (request) => {
       layoutData as QrLayout,
       maxPages,
     );
-
-    const { data: claimData, error: claimError } = await userClient.rpc("claim_stamp_file", {
-      p_stamp_file_id: stampFile.id,
-      p_source_sha256: result.sourceSha256,
-    });
-    if (claimError) throw new Error("stamp_claim_rejected");
-    claimed = true;
-    const claim = claimData as { storagePath?: unknown; attemptCount?: unknown } | null;
-    if (claim?.storagePath !== stampFile.storage_path) {
-      throw new Error("stamp_claim_response_invalid");
+    if (result.sourceSha256 !== sourceSha256) {
+      throw new Error("source_hash_changed");
     }
 
     const { error: uploadError } = await admin.storage.from(BUCKET_NAME).upload(

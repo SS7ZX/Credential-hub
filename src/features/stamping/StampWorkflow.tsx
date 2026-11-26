@@ -1,9 +1,11 @@
 import { useCallback, useEffect, useMemo, useState } from 'react'
+import JSZip from 'jszip'
 import { supabase } from '../../lib/supabase'
 import { inspectPdfTemplate, PdfTemplateError } from './pdf-template'
 import {
   matchStampFiles,
   parseStampCsv,
+  buildRunReportCsv,
   type MatchedPair,
   type StampableCredential,
 } from './matching'
@@ -499,6 +501,52 @@ export default function StampWorkflow({ organizationId, events, achievements }: 
     }))
   }
 
+  async function downloadRunFiles(run: ActiveRun) {
+    setProcessing(true)
+    setError('')
+    setMessage('')
+    try {
+      const completed = run.pairs.filter((pair) => pair.status === 'completed')
+      if (!completed.length) throw new Error('No completed stamped PDFs are available for this achievement.')
+      const zip = new JSZip()
+      for (let index = 0; index < completed.length; index += 1) {
+        const pair = completed[index]
+        const signed = await callStampFunction<{ signedUrl: string }>('finalize-run', {
+          organizationId,
+          stampRunId: run.id,
+          action: 'sign-file',
+          stampFileId: pair.stampFileId,
+        })
+        const response = await fetch(signed.signedUrl, { cache: 'no-store' })
+        if (!response.ok) throw new Error(`A stamped PDF download failed (${response.status}).`)
+        const bytes = new Uint8Array(await response.arrayBuffer())
+        const safeName = safeDownloadName(pair.file.name)
+        zip.file(safeName, bytes)
+      }
+      const blob = await zip.generateAsync({
+        type: 'blob',
+        compression: 'DEFLATE',
+        compressionOptions: { level: 6 },
+      })
+      downloadBlob(blob, `SAMPLE-stamped-${safeDownloadName(run.achievementId)}.zip`)
+
+      const achievementName = achievements.find((item) => item.id === run.achievementId)?.name ?? run.achievementId
+      const csv = buildRunReportCsv(run.pairs.map((pair) => ({
+        fullName: pair.row.full_name,
+        fileName: pair.file.name,
+        serial: pair.credential.serial_number,
+        status: pair.status,
+        errorCode: pair.errorCode,
+      })), achievementName)
+      downloadBlob(new Blob([csv], { type: 'text/csv;charset=utf-8' }), `run-report-${safeDownloadName(run.achievementId)}.csv`)
+      setMessage(`Downloaded a per-achievement ZIP and formula-sanitized run report for ${completed.length} PDF(s).`)
+    } catch (cause) {
+      setError(messageOf(cause))
+    } finally {
+      setProcessing(false)
+    }
+  }
+
   return (
     <section className="admin-card batch-card stamping-panel">
       <span className="eyebrow">GOOGLE DRIVE IMPORT</span>
@@ -644,6 +692,20 @@ export default function StampWorkflow({ organizationId, events, achievements }: 
               {processing ? `Resuming ${progress.finished}/${progress.total}…` : 'Resume pending or failed files'}
             </button>
           )}
+          {!reviewPending && activeRuns.some((run) => run.pairs.some((pair) => pair.status === 'completed')) && (
+            <div className="stamping-downloads">
+              {activeRuns.map((run) => run.pairs.some((pair) => pair.status === 'completed') && (
+                <button
+                  className="button button-secondary"
+                  key={run.id}
+                  disabled={processing}
+                  onClick={() => void downloadRunFiles(run)}
+                >
+                  Download per-achievement ZIP + report
+                </button>
+              ))}
+            </div>
+          )}
         </div>
       )}
 
@@ -675,4 +737,19 @@ export default function StampWorkflow({ organizationId, events, achievements }: 
 
 function messageOf(error: unknown): string {
   return error instanceof Error ? error.message : 'Stamping request failed. Please try again.'
+}
+
+function safeDownloadName(value: string): string {
+  return value.normalize('NFKC').replace(/[^A-Za-z0-9._-]+/g, '-').replace(/^-|-$/g, '').slice(0, 120) || 'achievement'
+}
+
+function downloadBlob(blob: Blob, filename: string): void {
+  const url = URL.createObjectURL(blob)
+  const link = window.document.createElement('a')
+  link.href = url
+  link.download = filename
+  window.document.body.append(link)
+  link.click()
+  link.remove()
+  window.setTimeout(() => URL.revokeObjectURL(url), 30_000)
 }

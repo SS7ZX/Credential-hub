@@ -174,6 +174,36 @@ export function collapseWhitespace(value: string): string {
   return value.trim().replace(/\s+/gu, ' ')
 }
 
+export function sanitizeCsvFormulaCell(value: string): string {
+  if (/^[=+\-@]/u.test(value)) return `'${value}`
+  return value
+}
+
+export function buildRunReportCsv(pairs: readonly ReviewPairForReport[], achName: string): string {
+  const headers = ['achievement', 'full_name', 'file_name', 'credential_serial', 'status', 'error_code']
+  const rows = pairs.map((pair) => [
+    achName,
+    pair.fullName,
+    pair.fileName,
+    pair.serial,
+    pair.status,
+    pair.errorCode ?? '',
+  ].map((value) => sanitizeCsvFormulaCell(String(value))).map(csvQuote).join(','))
+  return [headers.join(','), ...rows].join('\r\n')
+}
+
+export type ReviewPairForReport = {
+  fullName: string
+  fileName: string
+  serial: string
+  status: string
+  errorCode: string | null
+}
+
+function csvQuote(value: string): string {
+  return `"${value.replaceAll('"', '""')}"`
+}
+
 function groupBy<T>(values: readonly T[], keyOf: (value: T) => string): Map<string, T[]> {
   const result = new Map<string, T[]>()
   for (const value of values) {

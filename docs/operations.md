@@ -60,6 +60,22 @@ Vercel documentation:
 - The database serializes organization send reservations under an advisory lock, counting reserved, successful, and failed provider attempts from the preceding 24 hours. The cap is conservative: a failed provider attempt still consumes quota for the window. Resend requests carry the unique reservation UUID as an idempotency key.
 - Organization invitations are sent only by `send-emails` after an owner check. Supabase Auth generates a sign-in/verification action link, but delivery uses the configured Resend sender. The recipient must sign in with the invited, verified email and explicitly accept within seven days; owners can invalidate an outstanding link by resending to that address.
 
+## Drive stamping operations
+
+- `GOOGLE_DRIVE_SERVICE_ACCOUNT_JSON` is a Supabase Edge Function secret. Never add it to Vercel,
+  a `VITE_*` variable, a migration, or a browser bundle.
+- `MAX_STAMP_PDF_PAGES` is a server-side Edge Function setting with a conservative default of 50
+  and an allowed range of 1–100.
+- Drive requests may use only fixed `oauth2.googleapis.com` and `www.googleapis.com` endpoints.
+  Folder and file IDs are validated; URLs and arbitrary hosts are rejected.
+- Source PDFs are read transiently, never written to Drive, and never persisted as originals.
+  Only stamped output is retained in the private Storage bucket.
+- Stamp processing uses one PDF per Edge Function call, browser concurrency no greater than 2,
+  403/429 backoff, 5-minute processing leases, idempotent retries, and short-lived signed URLs.
+- Downloaded ZIPs and reports are copied outside Supabase; their lifecycle is governed by the
+  organization's retention policy. Browser ZIP assembly is memory-intensive and should be used
+  achievement-by-achievement.
+
 ## PDF and branding assets
 
 The generated PDF is a functional placeholder using built-in Helvetica and a simple landscape border. Before production branding, receive and review the issuer-approved A4 landscape backgrounds, logo, and licensed font files. Validate font embedding, page dimensions, text overflow, contrast, recipient-consent behavior, and Unicode names against the approved assets. Do not use unlicensed fonts or invent final brand artwork.

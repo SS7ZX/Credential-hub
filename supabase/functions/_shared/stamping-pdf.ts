@@ -153,10 +153,10 @@ export async function stampPdf(
   document.catalog.delete(PDFName.of("Metadata"));
 
   const output = await document.save({ useObjectStreams: true });
-  const outputSha256 = await sha256(output);
+  const outputSha256 = await sha256PdfBytes(output);
   return {
     bytes: output,
-    sourceSha256: await sha256(source),
+    sourceSha256: await sha256PdfBytes(source),
     outputSha256,
     pageCount: pages.length,
   };
@@ -193,7 +193,7 @@ function wrapLabel(
   return lines;
 }
 
-async function sha256(bytes: Uint8Array): Promise<string> {
+export async function sha256PdfBytes(bytes: Uint8Array): Promise<string> {
   const buffer = new ArrayBuffer(bytes.byteLength);
   new Uint8Array(buffer).set(bytes);
   const digest = await crypto.subtle.digest("SHA-256", buffer);

@@ -7,7 +7,7 @@ import {
   RequestBodyError,
 } from "../_shared/http.ts";
 import { authenticateRequest, getAdminClient } from "../_shared/supabase.ts";
-import { getOrganizationDid } from "../_shared/site-config.ts";
+import { getOrganizationDid, getPublicSiteUrl } from "../_shared/site-config.ts";
 
 const organizationSchema = z.object({
   name: z.string().trim().min(1).max(200)
@@ -39,7 +39,16 @@ Deno.serve(async (request) => {
       p_slug: input.slug,
       p_did: getOrganizationDid(),
       p_user_id: userId,
+      p_serial_prefix: deriveSerialPrefix(),
     });
+
+    function deriveSerialPrefix(): string {
+      const origin = getPublicSiteUrl();
+      const hostname = new URL(origin).hostname;
+      const label = hostname.split(".")[0] ?? "CH";
+      const prefix = label.replace(/[^A-Za-z0-9]+/g, "-").replace(/^-|-$/g, "").slice(0, 20);
+      return prefix.toUpperCase() || "CH";
+    }
     if (error) {
       if (error.code === "23505") {
         return jsonResponse({ error: "An organization with that slug already exists" }, 409);

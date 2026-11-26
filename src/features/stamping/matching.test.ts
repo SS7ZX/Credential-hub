@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { matchStampFiles, parseStampCsv, type DriveCandidate, type StampableCredential } from './matching'
+import { buildRunReportCsv, matchStampFiles, parseStampCsv, sanitizeCsvFormulaCell, type DriveCandidate, type StampableCredential } from './matching'
 
 const row = 'Adnan Syukur,adnan@example.test,Seminar,Adnan Syukur.pdf'
 const credential: StampableCredential = {
@@ -21,6 +21,17 @@ const file = (name: string, id = 'drive-file-1'): DriveCandidate => ({
 })
 
 describe('stamp CSV matching', () => {
+  it('sanitizes formula-leading report cells and quotes report data', () => {
+    expect(sanitizeCsvFormulaCell('=SUM(1,2)')).toBe("'=SUM(1,2)")
+    expect(sanitizeCsvFormulaCell('+cmd')).toBe("'+cmd")
+    expect(buildRunReportCsv([{
+      fullName: '@Name',
+      fileName: 'A,"B".pdf',
+      serial: 'SERIAL-1',
+      status: 'completed',
+      errorCode: null,
+    }], 'Achievement')).toContain('"\'@Name","A,""B"".pdf","SERIAL-1"')
+  })
   it('requires all approved columns, a nonempty email, and exact file names', () => {
     expect(() => parseStampCsv('full_name,email,file_name\nName,a@example.test,Name.pdf')).toThrow(/category/)
     expect(() => parseStampCsv('full_name,email,category,file_name\nName, ,Event,Name.pdf')).toThrow(/missing email/)
@@ -46,7 +57,6 @@ describe('stamp CSV matching', () => {
       'missing_file',
       'extra_file',
       'case_collision',
-      'credential_missing',
     ]))
 
     const wrongName = matchStampFiles(

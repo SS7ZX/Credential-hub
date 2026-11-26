@@ -25,3 +25,24 @@ Authenticated owner, admin, and issuer PDF generation reads the name from the pr
 ## Deletion
 
 Data deletion removes recipient name, email, email hash, salt, issuance-row payloads, and email-event payload details. Active per-credential consent scopes receive withdrawal events with the system notice version. Credentials associated with the recipient are revoked; their signed payload, JWS, content hash, and PDF path are cleared while the credential ID, revocation record, consent history, and internal revoked-ID entry remain. Previously downloaded or copied credentials cannot be recalled.
+
+## Existing-PDF stamping and retained artifacts
+
+Google Drive stamping is read-only. The issuer shares a Drive folder as Viewer with a service
+account; the app stores no service-account key in Vercel or the browser and never writes back to
+Drive. Source PDFs are downloaded transiently per Edge Function invocation and are not persisted
+to stamped-PDF Storage.
+
+Stamped PDFs are stored only in the private `stamped-certificate-pdfs` bucket. Object paths contain
+organization, run, and file UUIDs, not recipient names or source filenames. Private recipient
+names and emails are not written into PDF Info or XMP metadata. A stamped PDF may contain the
+recipient's achievement and the public credential ID/serial on its visible QR-adjacent labels.
+
+Run and file records contain IDs and sanitized error codes, not source filenames or recipient PII.
+The issuer may download a per-achievement ZIP and formula-sanitized run report for an approved
+audit period. Browser ZIP assembly is client-side and must be used only on an issuer-controlled
+workstation. The report and downloaded PDFs must follow the organization’s retention and deletion
+policy.
+
+Recipient anonymization deletes stamped object files, revokes associated credentials, and removes
+the recipient name and email. It cannot recall previously downloaded, copied, or emailed PDFs.

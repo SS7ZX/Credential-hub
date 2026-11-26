@@ -200,3 +200,62 @@ Production promotion requires a separate explicit review and approval. A success
 6. Only switch a staging deployment to the recovered project after validation and owner approval. Retain the original environment and incident evidence until the data owner approves cleanup.
 
 Never use a production backup to populate a staging environment containing real recipient PII. Use synthetic staging data or an approved, minimized, anonymized dataset.
+
+## 6. Drive import and stamping operations
+
+### Required staging secrets
+
+- `GOOGLE_DRIVE_SERVICE_ACCOUNT_JSON`: full read-only Google service-account key JSON as a
+  Supabase Edge Function secret. It must never be in Vercel, a `VITE_*` variable, logs, or Git.
+- `MAX_STAMP_PDF_PAGES`: positive integer no greater than 100. A conservative staging default is
+  50. This controls server-side PDF validation; the 15 MB PDF limit is also enforced.
+
+Create a dedicated Google service account, enable only the APIs required for read-only Drive
+access, and share each source folder with that account as Viewer. Folder/file IDs must match the
+strict 10–255 character identifier format. A source URL or arbitrary hostname must be rejected.
+Only fixed Google API HTTPS hosts may be contacted.
+
+### Local and staging validation
+
+1. Use synthetic recipient rows and synthetic PDFs. Issue credentials before creating a stamping
+   run. Never test with real names or emails.
+2. Upload no source PDF to Supabase Storage. Source PDFs remain transient in Edge Function memory.
+3. Confirm the achievement layout first. The layout must be for 25–30 mm at 25.4/72 points per
+   millimeter, with page number, lower-left x/y, size, expected page dimensions/tolerance, and
+   zero rotation.
+4. Load the top-level folder and confirm every Event > Achievement folder mapping. Every exact
+   CSV/Drive match must pass; missing, duplicate, extra, case-collision, MIME, folder, and wrong-
+   recipient matches stop the run.
+5. Approve all random sample previews and inspect the full matching list. Stamp one PDF per Edge
+   Function call, at browser concurrency no higher than 2.
+6. Verify a downloaded output: PDF opens, its QR decodes to the exact
+   `{PUBLIC_SITE_URL}/verify/{credentialUuid}` URL, dimensions are unchanged, and metadata contains
+   no recipient name or email. QR decode of the output remains a manual or automation check; do
+   not claim it passed until the decoded URL is recorded.
+7. For a 403 or 429 response, stop and use exponential backoff plus the Google `Retry-After`
+   header. Resume by run ID; completed files must not be stamped twice.
+
+### Failure handling
+
+- `pdf_signed`, `pdf_encrypted`, `pdf_rotated`, `page_limit`, `page_size_mismatch`, and
+  `invalid_mime` are terminal file errors. Fix the source or layout, then create a corrected
+  review-only run or retry according to the retained source hash policy.
+- `storage_upload_failed` and transient `other` failures are retryable. The 5-minute processing
+  lease prevents concurrent claim. A worker that expires must be retried rather than marked
+  completed.
+- No run should be reported as successful until every file is either completed or has a sanitized
+  terminal failure. Never expose filenames or provider response bodies in application logs.
+
+### Storage quota
+
+For 300 PDFs, estimate:
+
+- Assumed average: 15 MB * 300 = 4.50 GB
+- Conservative 20 MB (while source limit remains 15 MB): 6.00 GB
+- Working estimate: 5 GB staged quota plus 2× free headroom for retry/replacement objects
+
+The download output contains originals plus stamped objects; do not assume Storage is the only
+retained copy. Set a reviewed retention period and monitor bucket bytes, 300-object operations,
+signed-URL use, and failed upload/delete retries. Browser-side ZIP assembly is memory-intensive;
+process one achievement at a time and split batches if browser memory or zip runtime limits are
+observed.
