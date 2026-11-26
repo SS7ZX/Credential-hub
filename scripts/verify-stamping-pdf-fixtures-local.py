@@ -1,14 +1,14 @@
 import json
 import os
-from pathlib import Path
 import subprocess
 import sys
+from io import BytesIO
+from pathlib import Path
 from tempfile import TemporaryDirectory
 
 import pymupdf
 import zxingcpp
 from PIL import Image
-from io import BytesIO
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -87,13 +87,26 @@ def main() -> None:
             document.close()
 
         expected_rejections = {
-            "digitally-signed-a4.pdf": "pdf_signed",
-            "encrypted-a4.pdf": "pdf_encrypted",
-            "rotated-a4.pdf": "pdf_rotated",
-            "non-a4.pdf": "page_size_mismatch",
+            "digitally-signed-a4.pdf": (
+                "pdf_signed",
+                "Digitally signed PDFs cannot be stamped.",
+            ),
+            "encrypted-a4.pdf": (
+                "pdf_encrypted",
+                "Encrypted PDFs cannot be stamped.",
+            ),
+            "rotated-a4.pdf": (
+                "pdf_rotated",
+                "Rotated PDF pages cannot be stamped.",
+            ),
+            "non-a4.pdf": (
+                "page_size_mismatch",
+                "PDF page size does not match the saved QR layout.",
+            ),
         }
         actual_rejections = {
-            item["fixture"]: item["code"] for item in stamp_results["rejected"]
+            item["fixture"]: (item["code"], item["message"])
+            for item in stamp_results["rejected"]
         }
         if actual_rejections != expected_rejections:
             fail(f"rejection codes differ: {actual_rejections!r}")

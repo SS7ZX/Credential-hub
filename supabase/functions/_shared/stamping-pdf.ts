@@ -23,18 +23,30 @@ export type QrLayout = {
   page_size_tolerance_points: number;
 };
 
+type StampPdfErrorCode =
+  | "pdf_invalid"
+  | "pdf_encrypted"
+  | "pdf_signed"
+  | "pdf_rotated"
+  | "page_limit"
+  | "page_size_mismatch"
+  | "qr_stamping_failed";
+
+const STAMP_PDF_ERROR_MESSAGES: Record<StampPdfErrorCode, string> = {
+  pdf_invalid: "The PDF is invalid or could not be opened.",
+  pdf_encrypted: "Encrypted PDFs cannot be stamped.",
+  pdf_signed: "Digitally signed PDFs cannot be stamped.",
+  pdf_rotated: "Rotated PDF pages cannot be stamped.",
+  page_limit: "The PDF exceeds the configured page limit.",
+  page_size_mismatch: "PDF page size does not match the saved QR layout.",
+  qr_stamping_failed: "The QR code cannot be placed with the saved layout.",
+};
+
 export class StampPdfError extends Error {
   constructor(
-    readonly code:
-      | "pdf_invalid"
-      | "pdf_encrypted"
-      | "pdf_signed"
-      | "pdf_rotated"
-      | "page_limit"
-      | "page_size_mismatch"
-      | "qr_stamping_failed",
+    readonly code: StampPdfErrorCode,
   ) {
-    super(code);
+    super(STAMP_PDF_ERROR_MESSAGES[code]);
     this.name = "StampPdfError";
   }
 }

@@ -58,7 +58,7 @@ for (const fixture of validFixtures) {
   stamped.push({ fixture: fixture.file, output: fixture.output, expectedUrl });
 }
 
-const rejected: Array<{ fixture: string; code: string }> = [];
+const rejected: Array<{ fixture: string; code: string; message: string }> = [];
 for (const fixture of rejectedFixtures) {
   const source = await Deno.readFile(
     new URL(`../supabase/functions/_shared/fixtures/${fixture.file}`, import.meta.url),
@@ -76,7 +76,11 @@ for (const fixture of rejectedFixtures) {
     if (!(error instanceof StampPdfError) || error.code !== fixture.code) {
       throw new Error(`Unexpected rejection for ${fixture.file}`, { cause: error });
     }
-    rejected.push({ fixture: fixture.file, code: error.code });
+    rejected.push({
+      fixture: fixture.file,
+      code: error.code,
+      message: error.message,
+    });
     continue;
   }
   throw new Error(`Expected ${fixture.file} to be rejected as ${fixture.code}`);

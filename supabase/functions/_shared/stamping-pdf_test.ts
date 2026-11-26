@@ -123,6 +123,14 @@ async function assertStampError(
   expectedCode: string,
   maxPages = 20,
 ): Promise<void> {
+  const expectedMessages: Record<string, string> = {
+    pdf_signed: "Digitally signed PDFs cannot be stamped.",
+    pdf_encrypted: "Encrypted PDFs cannot be stamped.",
+    pdf_rotated: "Rotated PDF pages cannot be stamped.",
+    page_limit: "The PDF exceeds the configured page limit.",
+    page_size_mismatch: "PDF page size does not match the saved QR layout.",
+    qr_stamping_failed: "The QR code cannot be placed with the saved layout.",
+  };
   try {
     await stampPdf(
       bytes,
@@ -133,7 +141,11 @@ async function assertStampError(
       maxPages,
     );
   } catch (error) {
-    if (error instanceof StampPdfError && error.code === expectedCode) return;
+    if (
+      error instanceof StampPdfError
+      && error.code === expectedCode
+      && error.message === expectedMessages[expectedCode]
+    ) return;
     throw error;
   }
   throw new Error(`Expected stamp error ${expectedCode}`);
