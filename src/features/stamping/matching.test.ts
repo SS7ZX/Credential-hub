@@ -24,6 +24,7 @@ describe('stamp CSV matching', () => {
   it('sanitizes formula-leading report cells and quotes report data', () => {
     expect(sanitizeCsvFormulaCell('=SUM(1,2)')).toBe("'=SUM(1,2)")
     expect(sanitizeCsvFormulaCell('+cmd')).toBe("'+cmd")
+    expect(sanitizeCsvFormulaCell('-1+1')).toBe("'-1+1")
     expect(buildRunReportCsv([{
       fullName: '@Name',
       fileName: 'A,"B".pdf',
