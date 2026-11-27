@@ -1,8 +1,11 @@
 # Deployment and production rollout
 
-> **STOP: Do not push this branch to `main` or deploy until you have completed and approved the Production rollout order below.**
+> **STOP: Do not push to `main` before completing and approving the Production rollout order below. Stage and verify the release first.**
 
 This document describes a controlled rollout for an operator who has explicitly approved the target. It does not authorize a deployment. Do not use this procedure until local and staging checks have passed and the data owner has approved the production change.
+
+Complete [launch-checklist.md](./launch-checklist.md) with the service owner and a second reviewer.
+Keep production at **NO-GO** while required manual staging or retention/legal decisions are open.
 
 ## Required go/no-go gates
 

@@ -8,7 +8,9 @@ The OG middleware uses that same consent-aware JSON projection. It uses a 30-sec
 
 ## Private data and consent
 
-Raw recipient email and display name remain in Postgres and are not exposed by public Edge Functions except for an explicitly consented display name. Consent is recorded per credential with independent `masked` and `full` scopes. It is hidden by default. Only the recipient's credential-scoped, short-lived management session can grant or withdraw it. Each state change stores a timestamp and notice version and creates an audit event. Consent events are private and unavailable through direct client table access.
+Raw recipient email and display name remain in Postgres and are not exposed by public Edge Functions except for an explicitly consented display name. An optional participant/external ID may also be collected for issuer-side roster matching. It is private recipient data: it is not embedded in VC-JWTs, public projections, PDF metadata, or public serials; it is cleared when the recipient is anonymized. Do not collect NIK or other sensitive official identifiers unless the organization has an approved necessity and lawful basis.
+
+Consent is recorded per credential with independent `masked` and `full` scopes. It is hidden by default. Only the recipient's credential-scoped, short-lived management session can grant or withdraw it. Each state change stores a timestamp and notice version and creates an audit event. Consent events are private and unavailable through direct client table access.
 
 For masked consent, names are normalized to NFC and split by Unicode grapheme. A name with one word or at most six graphemes displays initials only. Longer names display the first word followed by each later word's initial plus three asterisks (for example, `Ahmad R*** S***`). Full-name display requires the separate `full` consent.
 
@@ -24,7 +26,7 @@ Authenticated owner, admin, and issuer PDF generation reads the name from the pr
 
 ## Deletion
 
-Data deletion removes recipient name, email, email hash, salt, issuance-row payloads, and email-event payload details. Verification events are retained without their credential link or IP hash. Free-text revocation reasons are replaced with a fixed non-PII marker; credential-linked audit metadata is replaced with a redaction marker while the audit event, credential ID, action, actor, and timestamp remain. Active per-credential consent scopes receive withdrawal events with the system notice version. Credentials associated with the recipient are revoked; their signed payload, JWS, content hash, and PDF path are cleared while the credential ID, revocation record, consent history, and internal revoked-ID entry remain. Previously downloaded or copied credentials cannot be recalled.
+Data deletion removes recipient name, email, email hash, salt, external ID, issuance-row payloads, and email-event payload details. Verification events are retained without their credential link or IP hash. Free-text revocation reasons are replaced with a fixed non-PII marker; credential-linked audit metadata is replaced with a redaction marker while the audit event, credential ID, action, actor, and timestamp remain. Active per-credential consent scopes receive withdrawal events with the system notice version. Credentials associated with the recipient are revoked; their signed payload, JWS, content hash, and PDF path are cleared while the credential ID, revocation record, consent history, and internal revoked-ID entry remain. Previously downloaded or copied credentials cannot be recalled.
 
 ## Existing-PDF stamping and retained artifacts
 

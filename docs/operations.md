@@ -76,6 +76,68 @@ Vercel documentation:
   organization's retention policy. Browser ZIP assembly is memory-intensive and should be used
   achievement-by-achievement.
 
+## Monitoring, logs, and alerts
+
+### Required signals
+
+- **Public uptime:** probe `/verify` and `/.well-known/did.json` from an external uptime monitor at
+  one-minute intervals. The root `/verify` probe checks availability only; it must not submit
+  real credential data. The DID probe must validate HTTP 200, JSON content type, and a parseable
+  DID document. Probe `/.well-known/jwks.json` as a separate key-publication check.
+- **Vercel:** monitor deployment health, middleware/function errors, request failures, and latency
+  for `/c/:id`. Keep request logs free of credential IDs where possible; never record JWTs,
+  recipient link fragments, emails, or complete query strings.
+- **Supabase:** review Edge Function logs and Postgres logs in the Supabase Dashboard. Alert on
+  repeated invocation failures, authorization denials that materially exceed baseline, database
+  connection saturation, failed migrations, and Storage upload/delete failures. Use sanitized
+  request IDs or function names for correlation, not request bodies.
+- **Email:** track `send-emails` sent/failed/throttled totals and Resend provider delivery/bounce/
+  complaint events where webhook support is configured. A 2xx provider response means accepted,
+  not delivered.
+- **Storage and privacy:** track private stamped bucket bytes, object count, failed deletion
+  retries, signed-URL creation failures, and anonymization tasks not finalized. Do not retain
+  object names that contain PII; current paths are UUID-based.
+- **Error aggregation:** configure Sentry or an equivalent server-side error aggregator for
+  Vercel and Edge Function failures only after verifying PII scrubbing. Disable request-body,
+  authorization-header, cookie, URL-fragment, and full-URL capture. Do not upload source maps
+  publicly unless access is restricted and reviewed.
+
+### Initial alert thresholds (owner must review)
+
+These are proposed operational starting points, not measured service-level objectives. Confirm
+monitor capabilities and approve thresholds before production:
+
+| Signal | Proposed alert |
+|---|---|
+| `/verify` or `/.well-known/did.json` / JWKS availability | Page after 2 consecutive failed one-minute probes. |
+| Vercel or Edge Function 5xx rate | Alert when >= 5% of requests over 5 minutes, with at least 20 requests; page if sustained for 15 minutes. |
+| Public endpoint latency | Alert if p95 exceeds 2 seconds for 10 minutes; exclude deliberately slow/invalid test requests after review. |
+| Supabase database saturation | Alert at >= 80% of the configured connection or CPU limit for 10 minutes; page at >= 90% or on repeated connection failures. |
+| Email failures | Alert if >= 3 consecutive provider failures or >= 5% failure across 20+ attempts in 15 minutes; keep daily-plan throttling a separate expected metric. |
+| Stamping failures | Alert on any repeated `storage_upload_failed` or deletion failure; alert if a run's failed-file rate exceeds 10% after at least 10 files. |
+| Storage capacity | Warn at 70%, alert at 85%, and page at 95% of the configured bucket/project quota. |
+| Anonymization | Alert on any request pending beyond the operator-approved processing window; do not infer a retention period from this operational SLA. |
+
+Set a clear owner for acknowledging each alert. Tune thresholds using staging traffic before enabling paging. Alert contents and incident tickets must contain no names, emails, raw Drive filenames, signed URLs, access tokens, or credential JWTs.
+
+### Incident contacts and escalation
+
+Fill in and verify these channels before any production pilot. Do not put personal phone numbers or private contact details in this public repository; store them in the restricted incident contact system and link its identifier here.
+
+| Role | Primary contact / restricted-system reference | Backup |
+|---|---|---|
+| Service owner / go-no-go | **TODO — owner to fill** | **TODO** |
+| Supabase/database operator | **TODO — restricted contact reference** | **TODO** |
+| Vercel/web operator | **TODO — restricted contact reference** | **TODO** |
+| Privacy/legal incident lead | **TODO — restricted contact reference** | **TODO** |
+| Email/Drive provider operator | **TODO — restricted contact reference** | **TODO** |
+
+For suspected key exposure, PII disclosure, cross-tenant access, or unexpected public credential
+data: disable the affected workflow first, preserve sanitized evidence, notify the owner and
+privacy lead through the restricted channel, and follow [runbook.md](./runbook.md). Do not
+investigate using production recipient records unless the authorized incident lead approves the
+minimum necessary access.
+
 ## PDF and branding assets
 
 The generated PDF is a functional placeholder using built-in Helvetica and a simple landscape border. Before production branding, receive and review the issuer-approved A4 landscape backgrounds, logo, and licensed font files. Validate font embedding, page dimensions, text overflow, contrast, recipient-consent behavior, and Unicode names against the approved assets. Do not use unlicensed fonts or invent final brand artwork.

@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState, type FormEvent } from 'react'
+import { lazy, Suspense, useCallback, useEffect, useState, type FormEvent } from 'react'
 import { Link } from 'react-router-dom'
 import Papa from 'papaparse'
 import type { Session } from '@supabase/supabase-js'
@@ -6,7 +6,8 @@ import { supabase } from './lib/supabase'
 import { requestErrorMessage } from './lib/request-error'
 import { NetworkStatus } from './components/NetworkStatus'
 import { copyId } from './copy/id'
-import DriveStamping from './features/stamping/DriveStamping'
+
+const DriveStamping = lazy(() => import('./features/stamping/DriveStamping'))
 
 type Organization = { id: string; name: string; slug: string }
 type Membership = { role: 'owner' | 'admin' | 'issuer' | 'viewer'; organizations: Organization }
@@ -83,6 +84,7 @@ export default function Admin({ session, onSignOut }: { session: Session; onSign
   const [participantName, setParticipantName] = useState('')
   const [participantEmail, setParticipantEmail] = useState('')
   const [participantExternalId, setParticipantExternalId] = useState('')
+  const [driveStampingOpen, setDriveStampingOpen] = useState(false)
   const [memberEmail, setMemberEmail] = useState('')
   const [memberRole, setMemberRole] = useState<'admin' | 'issuer' | 'viewer'>('viewer')
   const [selectedEvent, setSelectedEvent] = useState('')
@@ -753,11 +755,24 @@ export default function Admin({ session, onSignOut }: { session: Session; onSign
         )}
 
         {canIssue && organization && (
-          <DriveStamping
-            organizationId={organization.id}
-            events={events}
-            achievements={achievements}
-          />
+          <section className="admin-card stamping-panel">
+            <span className="eyebrow">EXISTING CERTIFICATES</span><h2>Stamp QR codes on Drive PDFs</h2>
+            <p>Open the stamping workspace only when you need to import, review, and stamp an event's certificates.</p>
+            {!driveStampingOpen && (
+              <button className="button button-secondary" onClick={() => setDriveStampingOpen(true)}>
+                Open Drive stamping
+              </button>
+            )}
+            {driveStampingOpen && (
+              <Suspense fallback={<p className="admin-loading" role="status">{copyId.common.loading}…</p>}>
+                <DriveStamping
+                  organizationId={organization.id}
+                  events={events}
+                  achievements={achievements}
+                />
+              </Suspense>
+            )}
+          </section>
         )}
 
         <section className="admin-card batch-card"><span className="eyebrow">ISSUANCE HISTORY</span><h2>Recent batches</h2>

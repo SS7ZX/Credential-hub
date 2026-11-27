@@ -1,9 +1,7 @@
 import { lazy, Suspense, useCallback, useEffect, useRef, useState, type FormEvent, type ReactNode } from 'react'
 import { BrowserRouter, Link, Route, Routes, useNavigate, useParams, useSearchParams } from 'react-router-dom'
 import type { Session } from '@supabase/supabase-js'
-import QrScanner from 'qr-scanner'
-import QRCode from 'qrcode'
-import Admin from './Admin'
+const Admin = lazy(() => import('./Admin'))
 import { getPublicSiteUrl } from './config/brand'
 import { supabase } from './lib/supabase'
 import { requestErrorMessage } from './lib/request-error'
@@ -191,34 +189,47 @@ function VerificationForm({ initialValue = '' }: { initialValue?: string }) {
 
   useEffect(() => {
     if (!scannerOpen || !videoRef.current) return
-    const scanner = new QrScanner(
-      videoRef.current,
-      (decoded) => {
-        scanner.stop()
-        setScannerOpen(false)
-        let match: RegExpMatchArray | null = null
-        try {
-          const siteUrl = getPublicSiteUrl()
-          const url = new URL(decoded.data, siteUrl)
-          if (url.origin === siteUrl) {
-            match = url.pathname.match(/^\/(?:c|verify)\/([0-9a-f-]{36})$/i)
+    let active = true
+    let scanner: import('qr-scanner').default | undefined
+    void import('qr-scanner').then(({ default: QrScanner }) => {
+      if (!active || !videoRef.current) return
+      scanner = new QrScanner(
+        videoRef.current,
+        (decoded) => {
+          scanner?.stop()
+          setScannerOpen(false)
+          let match: RegExpMatchArray | null = null
+          try {
+            const siteUrl = getPublicSiteUrl()
+            const url = new URL(decoded.data, siteUrl)
+            if (url.origin === siteUrl) {
+              match = url.pathname.match(/^\/(?:c|verify)\/([0-9a-f-]{36})$/i)
+            }
+          } catch {
+            match = null
           }
-        } catch {
-          match = null
-        }
-        if (match) navigate(`/verify/${match[1]}`)
-        else {
-          setValue(decoded.data)
-          setError('That QR code is not a credential link for this site. You can paste its credential ID or signed VC-JWT instead.')
-        }
-      },
-      { onDecodeError: () => undefined, highlightScanRegion: true, highlightCodeOutline: true },
-    )
-    void scanner.start().catch((cause: unknown) => {
+          if (match) navigate(`/verify/${match[1]}`)
+          else {
+            setValue(decoded.data)
+            setError('That QR code is not a credential link for this site. You can paste its credential ID or signed VC-JWT instead.')
+          }
+        },
+        { onDecodeError: () => undefined, highlightScanRegion: true, highlightCodeOutline: true },
+      )
+      return scanner.start().catch((cause: unknown) => {
+        if (!active) return
+        setError(requestErrorMessage(cause, copyId.errors.cameraUnavailable))
+        setScannerOpen(false)
+      })
+    }).catch((cause: unknown) => {
+      if (!active) return
       setError(requestErrorMessage(cause, copyId.errors.cameraUnavailable))
       setScannerOpen(false)
     })
-    return () => scanner.destroy()
+    return () => {
+      active = false
+      scanner?.destroy()
+    }
   }, [navigate, scannerOpen])
 
   const verify = useCallback(async (input: string) => {
@@ -404,7 +415,9 @@ function CredentialPage() {
     void Promise.all([
       supabase.functions.invoke<PublicCredential>('get-credential', { body: { id, format: 'json' } }),
       supabase.functions.invoke<VerificationResult>('verify-credential', { body: { id } }),
-      QRCode.toDataURL(shareUrl, { width: 220, margin: 1, color: { dark: '#12231e', light: '#ffffff' } }),
+      import('qrcode').then(({ default: QRCode }) =>
+        QRCode.toDataURL(shareUrl, { width: 220, margin: 1, color: { dark: '#12231e', light: '#ffffff' } })
+      ),
     ]).then(([credentialResponse, verifyResponse, qrData]) => {
       if (!active) return
       if (credentialResponse.error) throw credentialResponse.error
@@ -560,7 +573,13 @@ function AdminRoute() {
   if (loading) {
     return <PortalLayout><section className="loading-card" role="status">Loading your workspace…</section></PortalLayout>
   }
-  if (session) return <Admin session={session} onSignOut={() => void signOut()} />
+  if (session) {
+    return (
+      <Suspense fallback={<PortalLayout><section className="loading-card" role="status">{copyId.common.loading}…</section></PortalLayout>}>
+        <Admin session={session} onSignOut={() => void signOut()} />
+      </Suspense>
+    )
+  }
 
   return (
     <PortalLayout>

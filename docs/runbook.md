@@ -180,6 +180,34 @@ The SQL intentionally grants only the owner membership on one organization, reco
 
 Production promotion requires a separate explicit review and approval. A successful staging run is not production authorization.
 
+## 4a. Signing-key compromise response
+
+Treat suspected private-key exposure as an active signing incident, even if misuse is not yet
+confirmed:
+
+1. Stop issuance and any workflow that can create new signed credentials. Keep public verification
+   available if it can safely report the known key/status state.
+2. Notify the service owner and privacy/security incident lead using the restricted contacts in
+   [operations.md](./operations.md). Open an incident record; do not put key material, recipient
+   data, or full signed JWTs in it.
+3. Preserve relevant Supabase/Vercel audit and function logs, key IDs (`kid`), deployment
+   revisions, and time window. Never copy the private key into the incident ticket or chat.
+4. Generate a replacement Ed25519 key on a trusted machine with `npm run keygen -- <new-kid>`.
+   Store the private PKCS#8 key only in the approved secret manager and an encrypted offline
+   backup. Verify the public key matches before enabling issuance.
+5. Register the new public JWK and publish its `kid` through DID/JWKS. Retain the compromised
+   public key as a retired verification key while relying credentials may exist; do not publish
+   its private material or reuse the old key for signing.
+6. Determine the affected credential set using restricted database/operator procedures. Revoke
+   credentials only after issuer-owner approval and preserve their revocation evidence. Do not
+   silently mass-revoke or delete history.
+7. Test a new synthetic credential in staging, verify new and historical public keys, and have a
+   second operator review before resuming issuance. Record the decision, affected `kid` values,
+   rotation evidence, and follow-up actions.
+
+If exposure is unconfirmed but credible, keep issuance disabled until the owner/security lead
+explicitly accepts the evidence and recovery plan.
+
 ## 5. Backup and restore
 
 ### Back up staging

@@ -43,4 +43,4 @@ Credential email delivery uses the `send-emails` Supabase Edge Function and Rese
 
 Recipient names are omitted unless the recipient has consented. Credentials default to unlisted visibility and are reachable by link/QR; public listing is a separate choice.
 
-See [operations and deployment](./docs/operations.md) for environment setup, release gates, Vercel routing, Supabase deployment, recipient link handling, PDF asset readiness, and key-rotation procedures.
+See [operations and deployment](./docs/operations.md) for monitoring and incident response, [the production rollout order](./docs/deploy.md), [the launch sign-off checklist](./docs/launch-checklist.md), and [the event issuance guide](./docs/event-issuance.md).
