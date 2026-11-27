@@ -14,7 +14,8 @@ import {
   type LayoutDraft,
   type PageDimensions,
 } from './layout'
-import { inspectPdfTemplate, MAX_STAMP_PDF_BYTES, PdfTemplateError, validatePdfFileType } from './pdf-template'
+import { prepareSamplePdf } from './sample-pdf'
+import { createScanTestPdf } from './stamp-preview-pdf'
 import StampWorkflow from './StampWorkflow'
 
 GlobalWorkerOptions.workerSrc = pdfWorkerUrl
@@ -35,13 +36,12 @@ type LayoutRow = {
   expected_page_height_points: number
   page_size_tolerance_points: number
 }
+type CredentialOption = { id: string; serial_number: string }
 type PreviewState = {
   width: number
   height: number
   viewport: PageViewport
 }
-
-const SAMPLE_CREDENTIAL_ID = '00000000-0000-4000-8000-000000000000'
 
 function emptyDraft(): LayoutDraft {
   return {
@@ -60,17 +60,27 @@ export default function DriveStamping({ organizationId, events, achievements }: 
   const [draft, setDraft] = useState<LayoutDraft>(emptyDraft)
   const [layoutExists, setLayoutExists] = useState(false)
   const [sampleFile, setSampleFile] = useState<File | null>(null)
+  const [samplePdfBytes, setSamplePdfBytes] = useState<Uint8Array | null>(null)
   const [pages, setPages] = useState<PageDimensions[]>([])
+  const [credentials, setCredentials] = useState<CredentialOption[]>([])
+  const [previewCredentialId, setPreviewCredentialId] = useState('')
   const [preview, setPreview] = useState<PreviewState | null>(null)
-  const [qrDataUrl, setQrDataUrl] = useState('')
+  const [qrPreview, setQrPreview] = useState<{ url: string; dataUrl: string } | null>(null)
   const [loadingLayout, setLoadingLayout] = useState(false)
+  const [loadingCredentials, setLoadingCredentials] = useState(false)
   const [saving, setSaving] = useState(false)
+  const [downloadingPreview, setDownloadingPreview] = useState(false)
   const [error, setError] = useState('')
   const [message, setMessage] = useState('')
   const canvasRef = useRef<HTMLCanvasElement>(null)
   const viewportRef = useRef<PageViewport | null>(null)
 
-  const verifyUrl = `${getPublicSiteUrl()}/verify/${SAMPLE_CREDENTIAL_ID}`
+  const selectedCredential = credentials.find((item) => item.id === previewCredentialId)
+  const verifyUrl = selectedCredential
+    ? new URL(`/verify/${selectedCredential.id}`, getPublicSiteUrl()).toString()
+    : ''
+  const qrDataUrl = qrPreview?.url === verifyUrl ? qrPreview.dataUrl : ''
+  const verifyUrlIsPublicHttps = verifyUrl.startsWith('https://')
   const selectedAchievement = achievements.find((item) => item.id === achievementId)
   const selectedEvent = events.find((item) => item.id === selectedAchievement?.event_id)
   const currentPage = pages[draft.pageNumber - 1]
@@ -92,13 +102,42 @@ export default function DriveStamping({ organizationId, events, achievements }: 
 
   useEffect(() => {
     let active = true
+    if (!achievementId || !supabase) return
+
+    void (async () => {
+      const { data, error: queryError } = await supabase.from('credentials')
+        .select('id, serial_number')
+        .eq('organization_id', organizationId)
+        .eq('achievement_id', achievementId)
+        .eq('status', 'issued')
+        .order('issued_at', { ascending: false })
+        .limit(100)
+      if (queryError) throw queryError
+      if (!active) return
+      const rows = (data ?? []) as CredentialOption[]
+      setCredentials(rows)
+      setPreviewCredentialId(rows[0]?.id ?? '')
+    })()
+      .catch((cause: unknown) => {
+        if (active) setError(requestErrorMessage(cause, copyId.errors.requestFailed))
+      })
+      .finally(() => {
+        if (active) setLoadingCredentials(false)
+      })
+
+    return () => { active = false }
+  }, [achievementId, organizationId])
+
+  useEffect(() => {
+    let active = true
+    if (!verifyUrl) return
     void QRCode.toDataURL(verifyUrl, {
       errorCorrectionLevel: 'Q',
       margin: 4,
       width: 420,
       color: { dark: '#12231e', light: '#ffffff' },
     }).then((dataUrl) => {
-      if (active) setQrDataUrl(dataUrl)
+      if (active) setQrPreview({ url: verifyUrl, dataUrl })
     }).catch((cause: unknown) => {
       if (active) setError(requestErrorMessage(cause, copyId.errors.requestFailed))
     })
@@ -146,11 +185,10 @@ export default function DriveStamping({ organizationId, events, achievements }: 
     let task: PDFDocumentLoadingTask | null = null
     let page: PDFPageProxy | null = null
     const canvas = canvasRef.current
-    if (!canvas || !sampleFile || !currentPage || currentPage.rotation !== 0) return
+    if (!canvas || !samplePdfBytes || !currentPage || currentPage.rotation !== 0) return
 
     void (async () => {
-      const bytes = new Uint8Array(await sampleFile.arrayBuffer())
-      task = getDocument({ data: bytes })
+      task = getDocument({ data: samplePdfBytes })
       const pdf = await task.promise
       page = await pdf.getPage(draft.pageNumber)
       const base = page.getViewport({ scale: 1 })
@@ -173,25 +211,20 @@ export default function DriveStamping({ organizationId, events, achievements }: 
       page?.cleanup()
       if (task) void task.destroy()
     }
-  }, [currentPage, draft.pageNumber, sampleFile])
+  }, [currentPage, draft.pageNumber, samplePdfBytes])
 
   async function loadSample(file?: File) {
     if (!file) return
     setError('')
     setMessage('')
     try {
-      validatePdfFileType(file.type)
-      if (file.size > MAX_STAMP_PDF_BYTES) throw new PdfTemplateError('too_large', 'PDF files must be 15 MB or smaller.')
-      const metrics = await inspectPdfTemplate(new Uint8Array(await file.arrayBuffer()))
-      if (!metrics.length) throw new PdfTemplateError('pdf_invalid', 'The PDF has no pages.')
-      if (metrics.some((page) => page.rotation !== 0)) {
-        throw new PdfTemplateError('pdf_rotated', 'Rotated PDFs are not supported. Use an unrotated source file.')
-      }
-      setPages(metrics)
+      const prepared = await prepareSamplePdf(file)
+      setPages(prepared.pages)
       setSampleFile(file)
+      setSamplePdfBytes(prepared.bytes)
       setDraft((current) => {
-        const page = metrics[current.pageNumber - 1] ?? metrics[0]
-        const pageNumber = metrics[current.pageNumber - 1] ? current.pageNumber : 1
+        const page = prepared.pages[current.pageNumber - 1] ?? prepared.pages[0]
+        const pageNumber = prepared.pages[current.pageNumber - 1] ? current.pageNumber : 1
         return {
           ...current,
           pageNumber,
@@ -200,9 +233,42 @@ export default function DriveStamping({ organizationId, events, achievements }: 
       })
     } catch (cause) {
       setSampleFile(null)
+      setSamplePdfBytes(null)
       setPages([])
       setPreview(null)
       setError(requestErrorMessage(cause, copyId.errors.pdfInvalid))
+    }
+  }
+
+  async function downloadScanTest() {
+    if (!samplePdfBytes || !selectedCredential || !currentPage || layoutIssue) return
+    if (!verifyUrlIsPublicHttps) {
+      setError(copyId.stampingQrPreview.publicUrlRequired)
+      return
+    }
+    setDownloadingPreview(true)
+    setError('')
+    setMessage('')
+    try {
+      const bytes = await createScanTestPdf(
+        samplePdfBytes,
+        verifyUrl,
+        selectedCredential.id,
+        selectedCredential.serial_number,
+        numericDraft,
+      )
+      const blob = new Blob([bytes.slice().buffer], { type: 'application/pdf' })
+      const objectUrl = URL.createObjectURL(blob)
+      const link = document.createElement('a')
+      link.href = objectUrl
+      link.download = `qr-scan-test-${selectedCredential.serial_number.replace(/[^A-Za-z0-9._-]+/g, '-')}.pdf`
+      link.click()
+      window.setTimeout(() => URL.revokeObjectURL(objectUrl), 1_000)
+      setMessage(copyId.stampingQrPreview.downloadSuccess)
+    } catch (cause) {
+      setError(requestErrorMessage(cause, copyId.errors.scanPreviewFailed))
+    } finally {
+      setDownloadingPreview(false)
     }
   }
 
@@ -274,15 +340,21 @@ export default function DriveStamping({ organizationId, events, achievements }: 
     <section className="admin-card batch-card stamping-panel">
       <span className="eyebrow">EXISTING PDF STAMPING</span>
       <h2>Configure QR placement</h2>
-      <p>Credentials must be issued first. This editor previews a local sample PDF in your browser; the sample is not uploaded or saved.</p>
+      <p>Kredensial harus sudah terbit. Gambar/PDF sampel diproses di browser dan tidak diunggah atau disimpan.</p>
       <label className="stamping-field">Achievement
         <select value={achievementId} onChange={(event) => {
-          setAchievementId(event.target.value)
+          const nextAchievementId = event.target.value
+          setAchievementId(nextAchievementId)
           setError('')
           setMessage('')
+          setCredentials([])
+          setPreviewCredentialId('')
+          setLoadingCredentials(Boolean(nextAchievementId) && Boolean(supabase))
+          if (nextAchievementId && !supabase) setError(copyId.errors.supabaseUnavailable)
           setPages([])
           setPreview(null)
           setSampleFile(null)
+          setSamplePdfBytes(null)
           setLayoutExists(false)
           setDraft(emptyDraft())
           setLoadingLayout(Boolean(event.target.value))
@@ -303,10 +375,44 @@ export default function DriveStamping({ organizationId, events, achievements }: 
       )}
       {achievementId && (
         <>
-          <label className="csv-upload stamping-sample-upload">Choose a local sample PDF
-            <input type="file" accept="application/pdf" onChange={(event) => void loadSample(event.target.files?.[0])} />
+          <label className="stamping-field">{copyId.stampingQrPreview.credentialLabel}
+            <select
+              value={previewCredentialId}
+              onChange={(event) => setPreviewCredentialId(event.target.value)}
+              disabled={loadingCredentials}
+            >
+              <option value="">{loadingCredentials
+                ? copyId.stampingQrPreview.loadingCredentials
+                : copyId.stampingQrPreview.chooseCredential}</option>
+              {credentials.map((credential) => (
+                <option value={credential.id} key={credential.id}>{credential.serial_number}</option>
+              ))}
+            </select>
           </label>
-          {sampleFile && <p className="stamping-note">{sampleFile.name} · {(sampleFile.size / 1024 / 1024).toFixed(2)} MB · {pages.length} pages</p>}
+          {!loadingCredentials && credentials.length === 0 && (
+            <p className="stamping-note" role="status">{copyId.stampingQrPreview.issueCredentialFirst}</p>
+          )}
+          {selectedCredential && <p className="stamping-note">{copyId.stampingQrPreview.sameEnvironment}</p>}
+          {selectedCredential && !verifyUrlIsPublicHttps && (
+            <p className="admin-error" role="alert">{copyId.stampingQrPreview.publicHttpsRequired}</p>
+          )}
+          <label className="csv-upload stamping-sample-upload">{copyId.stampingQrPreview.sampleLabel}
+            <input
+              type="file"
+              accept="application/pdf,image/png,image/jpeg"
+              onChange={(event) => {
+                const file = event.currentTarget.files?.[0]
+                event.currentTarget.value = ''
+                void loadSample(file)
+              }}
+            />
+          </label>
+          {sampleFile && (
+            <p className="stamping-note">
+              {sampleFile.name} · {(sampleFile.size / 1024 / 1024).toFixed(2)} MB · {pages.length} page(s)
+              {sampleFile.type.startsWith('image/') ? copyId.stampingQrPreview.imageConverted : ''}
+            </p>
+          )}
           {hasRotatedPage && <p className="admin-error" role="alert">Rotated PDFs are rejected. Select an unrotated source file.</p>}
           {currentPage && (
             <div className="stamping-preview-area">
@@ -323,7 +429,7 @@ export default function DriveStamping({ organizationId, events, achievements }: 
                   <img
                     className="stamping-qr-overlay"
                     src={qrDataUrl}
-                    alt="Sample QR with a white quiet zone"
+                    alt={`${copyId.stampingQrPreview.qrAlt} ${selectedCredential?.serial_number ?? ''}`}
                     style={{
                       left: `${boxPosition[0] / preview.width * 100}%`,
                       top: `${boxPosition[1] / preview.height * 100}%`,
@@ -341,8 +447,10 @@ export default function DriveStamping({ organizationId, events, achievements }: 
                       width: `${132 / preview.width * 100}%`,
                     }}
                   >
-                    <strong>ID {SAMPLE_CREDENTIAL_ID.slice(0, 8)}</strong>
-                    <span>Serial SAMPLE-001</span>
+                    <strong>ID {selectedCredential?.id.slice(0, 8) ?? copyId.stampingQrPreview.credentialIdLabel}</strong>
+                    <span>{selectedCredential
+                      ? `Serial ${selectedCredential.serial_number}`
+                      : copyId.stampingQrPreview.scanUnavailable}</span>
                   </div>
                 )}
               </div>
@@ -388,10 +496,18 @@ export default function DriveStamping({ organizationId, events, achievements }: 
               <input type="number" step="0.1" min="0" max="72" value={draft.tolerance} onChange={(event) => updateDraft('tolerance', event.target.valueAsNumber)} />
             </label>
           </div>
-          <p className="stamping-note">QR error correction: Q · Sample URL: <code>{verifyUrl}</code></p>
+          {verifyUrl && <p className="stamping-note">QR error correction: Q · Verification URL: <code>{verifyUrl}</code></p>}
           {layoutIssue && <p className="admin-error" role="alert">{layoutIssue}</p>}
           {error && <p className="admin-error" role="alert">{error}</p>}
           {message && <p className="admin-success" role="status">{message}</p>}
+          <button
+            className="button button-secondary"
+            type="button"
+            disabled={downloadingPreview || !samplePdfBytes || !selectedCredential || !verifyUrlIsPublicHttps || Boolean(layoutIssue)}
+            onClick={() => void downloadScanTest()}
+          >
+            {downloadingPreview ? copyId.stampingQrPreview.preparing : copyId.stampingQrPreview.downloadAction}
+          </button>
           <button className="button button-primary" disabled={saving || loadingLayout || Boolean(layoutIssue)} onClick={() => void saveLayout()}>
             {saving ? 'Saving layout…' : 'Save layout for achievement'}
           </button>

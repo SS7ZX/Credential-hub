@@ -454,5 +454,8 @@ This guide is written against the implementation below. Recheck it when these fi
   — prefix validation, precedence, global uniqueness, and external-ID synchronization.
 - [Audited Event update migration](../supabase/migrations/20261127231500_audited_event_updates.sql)
   — authorized Event edits, audit records, and disabled direct updates for authenticated clients.
+- [Stamping sample preparation](../src/features/stamping/sample-pdf.ts) and
+  [scan-test PDF preview](../src/features/stamping/stamp-preview-pdf.ts) — local image-to-A4
+  conversion and a printable QR preview using an already-issued credential.
 - [Credential/RLS pgTAP tests](../supabase/tests/credential_hub_rls.sql) — serial overflow,
   prefix precedence, durable staging, and email request idempotency coverage.

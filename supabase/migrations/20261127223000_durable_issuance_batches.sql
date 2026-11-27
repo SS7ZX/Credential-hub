@@ -355,7 +355,7 @@ begin
 
     update public.issuance_batches
     set processed_count = processed_count
-            + case when v_previous_status is null then 1 else 0 end,
+            + case when v_previous_status = 'pending' then 1 else 0 end,
         failed = failed
             + case when v_previous_status is distinct from 'failed' then 1 else 0 end,
         succeeded = succeeded

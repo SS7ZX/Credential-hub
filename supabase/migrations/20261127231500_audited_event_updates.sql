@@ -20,7 +20,7 @@ declare
     v_description text;
     v_serial_prefix text;
 begin
-    if auth.role() is distinct from 'authenticated' or v_actor_id is null then
+    if v_actor_id is null then
         raise exception 'Authenticated user required' using errcode = '42501';
     end if;
     if p_name is null or length(pg_catalog.btrim(p_name)) = 0 then

@@ -135,7 +135,7 @@ begin
         return new;
     end if;
 
-    v_sequence := pg_catalog.substring(new.serial_number from '([0-9]+)$');
+    v_sequence := pg_catalog.substring(new.serial_number, '([0-9]+)$');
     if v_sequence is null then
         raise exception 'Could not derive the allocated credential serial sequence';
     end if;

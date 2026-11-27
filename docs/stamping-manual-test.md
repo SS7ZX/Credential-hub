@@ -12,6 +12,28 @@ This checklist is for an explicitly approved staging environment with synthetic 
 - Keep email in sandbox. Do not send PDFs by email.
 - Keep the original Drive files unchanged. Stamped output should be in the private Storage bucket only.
 
+## Image background and real-credential QR preview
+
+The QR layout editor accepts a local PDF, PNG, or JPEG. Images are converted in the browser to a
+single A4 landscape PDF for preview; the source image is not uploaded. Use the same dimensions as
+the PDFs that will eventually be stamped.
+
+1. Select the intended Achievement and an already-issued synthetic credential. The editor uses its
+   real credential ID and serial; it does not invent a credential or placeholder QR.
+2. Select the provided certificate image or a local PDF. Place the QR in a clear area, check the
+   quiet zone and adjacent ID/serial label, and save the layout if appropriate.
+3. Use **Download real QR scan-test PDF** to create a local print preview. This is not a new,
+   signed credential and does not upload the artwork.
+4. The preview requires the public HTTPS verification origin and a credential that exists in that
+   environment. A localhost URL, or a credential that exists only in a local database, will not
+   resolve from a phone against the public site.
+5. Print at 100% and scan the downloaded PDF/print. Confirm the URL and credential match the
+   selected test record. Record only pass/fail and a non-sensitive test reference.
+
+If the test credential is local-only, use this flow only to inspect placement and QR rendering.
+Actual phone verification remains **UNVERIFIED** until the URL resolves in the approved staging
+environment. Never use a real recipient credential for this preview.
+
 ## Live Drive verification (manual; currently UNVERIFIED)
 
 1. Create a test folder and subfolder in the staging Drive account. Add a small number of synthetic PDFs, including one valid PDF and one copy with an unsupported condition if safe to test.

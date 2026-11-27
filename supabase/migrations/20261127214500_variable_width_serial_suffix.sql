@@ -124,7 +124,7 @@ begin
 
         update public.issuance_batches
         set processed_count = processed_count
-                + case when v_existing_row.status is null then 1 else 0 end,
+                + case when v_existing_row.status = 'pending' then 1 else 0 end,
             succeeded = succeeded
                 + case when v_existing_row.status is distinct from 'succeeded' then 1 else 0 end,
             failed = failed
@@ -186,7 +186,7 @@ begin
 
     update public.issuance_batches
     set processed_count = processed_count
-            + case when v_existing_row.status is null then 1 else 0 end,
+            + case when v_existing_row.status = 'pending' then 1 else 0 end,
         succeeded = succeeded
             + case when v_existing_row.status is distinct from 'succeeded' then 1 else 0 end,
         failed = failed

@@ -22,6 +22,9 @@ insert into public.organizations (id, name, slug, did, created_by)
 values
     ('20000000-0000-0000-0000-000000000001', 'Org A', 'org-a', 'did:web:example.test', '10000000-0000-0000-0000-000000000001'),
     ('20000000-0000-0000-0000-000000000002', 'Org B', 'org-b', 'did:web:example.test', '10000000-0000-0000-0000-000000000005');
+update public.organizations
+set serial_prefix = 'TSQ'
+where id = '20000000-0000-0000-0000-000000000001';
 
 insert into public.organization_members (organization_id, user_id, role)
 values
@@ -495,7 +498,14 @@ select is((select status::text from public.issuance_batches where id = '70000000
 
 -- Issuer may create batches and persist credentials but may not revoke.
 set local role authenticated;
+set local request.jwt.claim.role = 'authenticated';
 set local request.jwt.claims = '{"sub":"10000000-0000-0000-0000-000000000003","role":"authenticated"}';
+select is(auth.role(), 'authenticated', 'event update RPC test sets the authenticated JWT role');
+select is(
+    auth.uid()::text,
+    '10000000-0000-0000-0000-000000000003',
+    'event update RPC test sets the issuer JWT subject'
+);
 select lives_ok(
     $$insert into public.issuance_batches(organization_id, event_id, achievement_id, created_by, total)
       values ('20000000-0000-0000-0000-000000000001', '30000000-0000-0000-0000-000000000001', '40000000-0000-0000-0000-000000000001', '10000000-0000-0000-0000-000000000003', 1)$$,
@@ -694,6 +704,55 @@ select is(
      where batch_id = (select id from public.issuance_batches where idempotency_key = 'durable-batch-test')),
     1,
     'resumed issuance staging remains one row per batch row number'
+);
+select lives_ok(
+    $$select public.record_issuance_failure(
+        '10000000-0000-0000-0000-000000000003',
+        (select id from public.issuance_batches where idempotency_key = 'durable-batch-test'),
+        1,
+        '{"full_name":"Staged Person","email":"staged@test.invalid"}'::jsonb,
+        repeat('a', 64),
+        'issuance_failed'
+    )$$,
+    'a pending issuance row can be marked failed'
+);
+select is(
+    (select processed_count from public.issuance_batches where idempotency_key = 'durable-batch-test'),
+    1,
+    'first row failure increments processed progress'
+);
+select is(
+    (select failed from public.issuance_batches where idempotency_key = 'durable-batch-test'),
+    1,
+    'first row failure increments the failed counter'
+);
+select lives_ok(
+    $$select public.persist_issuance_row(
+        '10000000-0000-0000-0000-000000000003',
+        (select id from public.issuance_batches where idempotency_key = 'durable-batch-test'),
+        1,
+        '{"full_name":"Staged Person","email":"staged@test.invalid"}'::jsonb,
+        repeat('a', 64),
+        'Staged Person', 'staged@test.invalid', 'hash-staged', 'salt-staged', 'skip',
+        '81000000-0000-0000-0000-000000000005', now(), null, 'unlisted',
+        '{}'::jsonb, 'staged-test-jws', 'key-a', 'hash-staged-content', null
+    )$$,
+    'a failed staged row can be retried successfully'
+);
+select is(
+    (select processed_count from public.issuance_batches where idempotency_key = 'durable-batch-test'),
+    1,
+    'retrying a failed row does not double-count processed progress'
+);
+select is(
+    (select failed from public.issuance_batches where idempotency_key = 'durable-batch-test'),
+    0,
+    'successful retry clears the failed counter'
+);
+select is(
+    (select succeeded from public.issuance_batches where idempotency_key = 'durable-batch-test'),
+    1,
+    'successful retry increments the succeeded counter'
 );
 insert into public.email_events (organization_id, credential_id, type, payload)
 values (
@@ -1162,14 +1221,14 @@ select is(
         '20000000-0000-0000-0000-000000000001',
         '81000000-0000-0000-0000-000000000001',
         2,
-        'batch-email-test'
+        '00000000-0000-4000-8000-000000000001'
     )->>'created',
     'true',
     'credential email request reserves a new idempotent attempt'
 );
 select lives_ok(
     $$select public.complete_email_send(
-      (select id from public.email_send_attempts where request_key = 'batch-email-test'),
+      (select id from public.email_send_attempts where request_key = '00000000-0000-4000-8000-000000000001'),
       'provider-idempotent', 'sent', null, true
     )$$,
     'idempotent credential email attempt records its provider result'
@@ -1179,7 +1238,7 @@ select is(
         '20000000-0000-0000-0000-000000000001',
         '81000000-0000-0000-0000-000000000001',
         2,
-        'batch-email-test'
+        '00000000-0000-4000-8000-000000000001'
     )->>'created',
     'false',
     'replaying the same email request key does not create another attempt'
@@ -1188,7 +1247,7 @@ select is(
     (select count(*)::int from public.email_send_attempts
      where organization_id = '20000000-0000-0000-0000-000000000001'
        and credential_id = '81000000-0000-0000-0000-000000000001'
-       and request_key = 'batch-email-test'),
+       and request_key = '00000000-0000-4000-8000-000000000001'),
     1,
     'idempotent email replay keeps exactly one reservation'
 );
@@ -1477,7 +1536,16 @@ select ok(
     'anonymization removes recipient payload from issuance rows'
 );
 select ok(
-    (select payload = '{"redacted": true}'::jsonb from public.email_events where credential_id = '81000000-0000-0000-0000-000000000001'),
+    exists (
+        select 1 from public.email_events
+        where credential_id = '81000000-0000-0000-0000-000000000001'
+          and payload = '{"redacted": true}'::jsonb
+    )
+    and not exists (
+        select 1 from public.email_events
+        where credential_id = '81000000-0000-0000-0000-000000000001'
+          and payload <> '{"redacted": true}'::jsonb
+    ),
     'anonymization redacts email-event payloads while retaining their audit row'
 );
 reset role;
@@ -1548,6 +1616,7 @@ select is(
     'event update writes a PII-free audit record with changed field names'
 );
 set local role authenticated;
+set local request.jwt.claim.role = 'authenticated';
 set local request.jwt.claims = '{"sub":"10000000-0000-0000-0000-000000000002","role":"authenticated"}';
 select throws_ok(
     $$select public.update_event(

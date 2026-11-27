@@ -16,6 +16,7 @@ export function requestErrorMessage(error: unknown, fallback: string): string {
       pdf_encrypted: copyId.errors.pdfEncrypted,
       pdf_invalid: copyId.errors.pdfInvalid,
       pdf_rotated: copyId.errors.pdfRotated,
+      image_invalid: copyId.errors.imageInvalid,
       page_size_mismatch: copyId.errors.pageSizeMismatch,
       page_limit: copyId.errors.pageLimit,
       drive_forbidden: copyId.errors.driveForbidden,
