@@ -18,7 +18,14 @@ For launch gates, use the [production rollout order](./deploy.md) and
   normalized to uppercase, and combined with the organization's atomic sequence. The sequence does
   not reset per event or category. Do not put recipient names, NIM/NIK, email addresses, or other
   personal data in a serial.
+- The workspace's initial duplicate policy, visibility, and email choices are `skip`, `unlisted`,
+  and off. They are React form state and can remain selected after you finish one batch; verify all
+  three settings again before every new issuance rather than assuming they reset.
 - The current UI has no event-edit control. Confirm the event name and serial prefix before saving.
+- The serial allocator currently pads suffixes to six characters using PostgreSQL `lpad`, which
+  truncates values wider than the target length. There is no overflow guard or seven-digit test;
+  treat this as a scale-up blocker and do not assume arbitrary-width serials. Details are under
+  [Serial prefix rules](#serial-prefix-rules).
 - Importing a CSV **replaces** the staged participant list; it does not append to manually entered
   participants. Save the original file securely before importing.
 - Issuance is sent to the server in sequential chunks of up to 50 rows. A failed request can leave
@@ -26,7 +33,9 @@ For launch gates, use the [production rollout order](./deploy.md) and
   that were never submitted are not available to the retry action.
 - “Retry failed rows” reprocesses persisted failed issuance rows only. It does not retry unsent
   chunks or send credential emails. The current batch screen shows counts, not a row-by-row
-  reconciliation or email-resend interface. See [interrupted or partial batches](#interrupted-or-partial-batches)
+  reconciliation or email-resend interface. The dashboard shows only the 10 most recent batches
+  and 20 most recent credentials and has no search/pagination for older records. See
+  [interrupted or partial batches](#9-failed-interrupted-or-partial-batches)
   before attempting recovery.
 - A successful email-provider response means accepted by the provider, not delivered to the
   recipient. The current UI does not expose a separate resend action for issuance emails.
@@ -92,6 +101,26 @@ The prefix must be unique across **all events in the database**, not merely with
 organization. A conflict prevents saving the event. If the prefix is blank, the organization's
 existing serial format is used.
 
+### Recommended naming pattern
+
+For example, for one event called **CTF HIMASTI 2026**:
+
+| Workspace field | Example |
+|---|---|
+| Event name | `CTF HIMASTI 2026` |
+| Event serial prefix | `CTF/HIMASTI/001` |
+| Achievement name | `CTF HIMASTI 2026 — Peserta` |
+| Category label | `Peserta` |
+| Criteria narrative | The approved, recipient-facing description of what participation means. |
+| Example serial | `CTF/HIMASTI/001/000123` |
+
+A Winner Achievement for this same event uses the same event prefix and the next organization
+sequence, for example `CTF/HIMASTI/001/000124`; the Achievement identifies the award. The current
+product assigns prefixes to **Events**, not to Achievements, and it has no category-specific
+counter or serial-prefix field. It cannot produce separate `.../PESERTA/...` and `.../JUARA/...`
+serial formats for different Achievements within one Event. Do not create duplicate Event records
+to work around this without the issuer owner's approval and a data-migration plan.
+
 When a prefix is set, the serial combines it with the numeric suffix allocated by the existing
 organization-wide atomic counter. For example:
 
@@ -103,6 +132,19 @@ The suffix remains globally allocated within that organization; it is not restar
 for a new event or Achievement. The allocation happens as part of the credential persistence
 transaction. A reissue consumes another sequence number. Prefixes are part of public credential
 serials and must not encode participant identity.
+
+The current SQL calls PostgreSQL `lpad(sequence, 6, '0')`. PostgreSQL truncates a string on the
+right when it exceeds the requested length, so a seven-digit sequence such as `1000000` becomes
+`100000`. Because the serial also contains the year, the exact collision depends on which
+truncated values have already been issued under the same prefix and year; the database does not
+currently reject overflow or expand the suffix. This boundary is not covered by the current
+serial tests. Before high-volume use, update the allocator to use variable-width padding (minimum
+six digits) or an explicit safe bound, and add pgTAP cases for six- and seven-digit values. Do not
+assume seven-digit serial behavior from the UI example. See the
+[issuance migration](../supabase/migrations/20261124133357_initial_credential_schema.sql) and
+[PostgreSQL `lpad` documentation](https://www.postgresql.org/docs/current/functions-string.html).
+The existing [database test](../supabase/tests/credential_hub_rls.sql) checks normalization and a
+six-digit serial example, but does not cover the overflow boundary.
 
 The current UI does not offer an event edit action. If an event was created with the wrong prefix,
 do not work around the UI by editing database rows; ask the authorized owner/operator to review a
@@ -145,17 +187,25 @@ Another Recipient,another@example.test,,2026-11-27,
 ```
 
 Use synthetic or authorized recipient data only. Recommended date format is ISO `YYYY-MM-DD`;
-include an explicit timezone when using a timestamp. Check that `expires_on` is later than
-`issued_on` before import. The UI does not provide a per-row preview for date validity before
-issuance.
+include an explicit timezone when using a timestamp. JavaScript interprets date-only strings as
+UTC; use a timestamp with an explicit offset if an exact instant matters. Check that `expires_on`
+is later than `issued_on` before import. The server checks that supplied values parse as dates, but
+the current issuance path does not enforce that the expiration is after the issue date. The UI does
+not provide a per-row preview for date validity before issuance.
 
 | Field | Requirement and behavior |
 |---|---|
 | `full_name` | Required; 1–200 characters after trimming. Repeated whitespace is collapsed. |
 | `email` | Required; valid email, maximum 320 characters. It is trimmed and lowercased before identity matching. |
 | `external_id` | Optional; maximum 120 characters. Repeated whitespace is collapsed. Kept as private recipient data, not placed in the signed credential or public projection, and cleared during anonymization. |
+| `category` | The current server schema accepts this optional legacy field (maximum 100 characters), but it does not select or change the batch Achievement. Do not rely on it; choose the Achievement once in the workspace instead. |
 | `issued_on` | Optional row-specific credential issue/valid-from date. If omitted, the server uses the batch date if present, otherwise the current time. |
 | `expires_on` | Optional row-specific credential expiration. If omitted, the batch expiration is used if present; otherwise the credential has no expiration value. |
+
+The Edge Function supports batch-level `issueDate` and `expiresAt` defaults, but the current
+workspace form does not expose those fields. In the current UI, use `issued_on` and `expires_on`
+for per-row dates; when `issued_on` is absent, the server uses its current time, and when
+`expires_on` is absent, no expiration is set.
 
 The selected Achievement is applied to every row in the batch. A CSV cannot assign different
 Achievements to different participants. Do not add a per-row `category` expecting it to change
@@ -199,8 +249,10 @@ Before creating a batch:
 
 The UI does not pre-deduplicate the staged CSV. The server applies the duplicate policy against
 an already-issued credential for the same normalized recipient in the organization and the same
-Achievement. Repeated rows in one batch can therefore cause the later row to be treated as a
-duplicate after the earlier row is persisted.
+Achievement whose database status is `issued`. The check does not use expiration time, so do not
+assume an expired-but-still-`issued` credential will be treated as a new recipient. Repeated rows
+in one batch can therefore cause the later row to be treated as a duplicate after the earlier row
+is persisted.
 
 ### Duplicate policy
 
@@ -208,7 +260,7 @@ The default is **Skip** and the choice is stored with the batch:
 
 | Policy | Result |
 |---|---|
-| `skip` | If the same recipient already has an issued credential for this Achievement in this organization, do not create another one. The row is counted as a successful skip and points to the existing credential. |
+| `skip` | If the same recipient already has a credential with status `issued` for this Achievement in this organization, do not create another one. The row is counted as a successful skip and points to the existing credential. |
 | `reissue` | Create an additional credential with a new serial. The existing credential is not automatically revoked. Use only after confirming that multiple active credentials are intended. |
 | `error` | Mark the duplicate row failed; the rest of the batch continues. The failed row can be retried after the underlying issue is resolved. |
 
@@ -225,6 +277,8 @@ identity and the selected Achievement.
   after the recipient grants the applicable consent through the management link.
 - Avoid selecting Public during a test. Use synthetic test recipients and verify the projection
   before any public release.
+- Confirm visibility on every batch: changing it for one batch does not automatically restore the
+  initial unlisted state while the current workspace remains open.
 
 ## 7. Issue the batch
 
@@ -251,9 +305,11 @@ Sending credential email is an opt-in checkbox and is off by default. When enabl
 - the browser calls the `send-emails` Edge Function; email provider credentials are server-side
   only;
 - emails are attempted only after the issuance loop finishes and only for credentials associated
-  with that batch that are in `issued` status;
+  with that batch that are in `issued` status. Rows skipped as duplicates point to the earlier
+  credential and are not included in the new batch's email query;
 - organization daily plan limits and sandbox settings apply; throttled or failed sends are not
-  evidence of credential issuance failure; and
+  evidence of credential issuance failure. Failed provider attempts may still consume the
+  conservative rolling 24-hour quota; see [operations](./operations.md).
 - provider acceptance is not a delivery receipt. Check the authorized provider/operations
   evidence before claiming that recipients received a message.
 
@@ -273,7 +329,9 @@ If the batch completed with failed rows:
 2. Correct the source data or resolve the configuration issue.
 3. Use **Retry failed rows** for that batch. The server retries persisted failed rows, at most 50
    per retry request.
-4. Refresh and verify that the failed count is resolved. Retry does not create a new batch and
+4. If failures remain, repeat **Retry failed rows**; each click processes at most 50 persisted
+   failed rows.
+5. Refresh and verify that the failed count is resolved. Retry does not create a new batch and
    does not send emails.
 
 Common causes include invalid row values, missing Achievement criteria, a missing/mismatched
@@ -289,8 +347,10 @@ been submitted. Therefore:
 - persisted rows with status `failed` can be retried from **Recent batches**;
 - rows in later chunks that were never sent are not stored in the batch and cannot be recovered by
   **Retry failed rows**; and
-- the current dashboard has no row-level batch detail to prove exactly which source rows were
-  submitted, nor a durable upload/resume workflow for the unsent portion.
+- the current dashboard lists only the 10 most recent batches and has no row-level batch detail to
+  prove exactly which source rows were submitted, nor a durable upload/resume workflow for the
+  unsent portion. It lists only the 20 most recent credentials, so it is not a complete
+  reconciliation report for large batches.
 
 If the browser closes or the network fails mid-batch, stop and do not blindly issue the whole CSV
 again. Preserve the original CSV in its approved secure location, refresh the dashboard, compare
@@ -342,3 +402,37 @@ accuracy.
 For operational or privacy incidents, use the restricted contacts and
 [operations guide](./operations.md). For unresolved launch gates, keep the release at NO-GO and
 follow the [launch checklist](./launch-checklist.md).
+
+## Known product gaps and engineering follow-up
+
+These are limitations of the current implementation, not operator configuration mistakes:
+
+| Gap | Current impact | Required follow-up before relying on the capability at scale |
+|---|---|---|
+| Serial suffix overflow | The current six-character `lpad` can truncate larger numbers; no boundary guard or seven-digit test exists. | Use variable-width padding or a safe hard limit and add pgTAP tests before crossing the boundary. |
+| Non-durable client chunking | Rows not yet submitted from browser memory are lost if the tab closes or the connection fails. | Persist the full validated batch before processing and make server-side progress/resume authoritative. |
+| Limited batch observability | The UI exposes aggregate counts for only the most recent 10 batches, no row-level outcomes, and only the most recent 20 credentials. | Add searchable batch detail with per-row status, sanitized failure codes, and pagination before using the UI as the sole reconciliation record. |
+| No credential-email resend action | Retrying failed issuance rows does not retry/resend email; skipped duplicates do not trigger a new email. | Add a separate authorized, idempotent email resend flow and show provider state without treating acceptance as delivery. |
+| Event-level prefix only | One serial prefix is shared by all Achievements for an Event; the suffix uses an organization-wide counter. | If category-specific formats or counters are required, decide their uniqueness/reset semantics before extending the schema. |
+| No event edit UI | Operators cannot correct event details or prefix from the workspace after creation. | Add an audited edit/archive workflow with rules for already-issued credentials, or keep the current create-only constraint explicit. |
+
+Do not treat these follow-ups as implemented merely because the operator can work around them
+manually. Any batch reconciliation or correction outside the visible workspace must be performed
+by an authorized operator under an approved, auditable procedure.
+
+## Implementation references
+
+This guide is written against the implementation below. Recheck it when these files change:
+
+- [Admin workspace](../src/Admin.tsx) — event/Achievement forms, CSV review, duplicate/visibility
+  state, 50-row chunking, recent-list limits, and email invocation.
+- [Issue-batch Edge Function](../supabase/functions/issue-batch/index.ts) — role enforcement,
+  request limits, date parsing, row validation, row retry, and credential persistence.
+- [Issuance row schema](../supabase/functions/_shared/issuance-row.ts) — allowed row fields,
+  lengths, email normalization, and whitespace normalization.
+- [Initial credential schema and persistence RPC](../supabase/migrations/20261124133357_initial_credential_schema.sql)
+  — recipient matching, duplicate semantics, and serial allocation.
+- [Event participant migration](../supabase/migrations/20261127001000_event_participant_fields.sql)
+  — event prefix validation/formatting and external-ID synchronization/anonymization.
+- [Credential/RLS pgTAP tests](../supabase/tests/credential_hub_rls.sql) — current database
+  coverage. It does not yet test the serial overflow boundary.
