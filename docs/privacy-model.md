@@ -14,6 +14,12 @@ The OG middleware uses that same consent-aware JSON projection. It uses a 30-sec
 
 Raw recipient email and display name remain in Postgres and are not exposed by public Edge Functions except for an explicitly consented display name. An optional participant/external ID may also be collected for issuer-side roster matching. It is private recipient data: it is not embedded in VC-JWTs, public projections, PDF metadata, or public serials; it is cleared when the recipient is anonymized. Do not collect NIK or other sensitive official identifiers unless the organization has an approved necessity and lawful basis.
 
+Validated issuance rows are durably staged before processing and contain normalized name, email,
+optional external ID, and dates. They remain private to authorized backend processing and are
+cleared during recipient anonymization when the normalized email matches the recipient. The batch
+detail API returns row numbers, statuses, sanitized error codes, and serial references only; it
+does not return staged payloads. CSV source filenames are discarded and not persisted.
+
 Consent is recorded per credential with independent `masked` and `full` scopes. It is hidden by default. Only the recipient's credential-scoped, short-lived management session can grant or withdraw it. Each state change stores a timestamp and notice version and creates an audit event. Consent events are private and unavailable through direct client table access.
 
 For masked consent, names are normalized to NFC and split by Unicode grapheme. A name with one word or at most six graphemes displays initials only. Longer names display the first word followed by each later word's initial plus three asterisks (for example, `Ahmad R*** S***`). Full-name display requires the separate `full` consent.
@@ -63,4 +69,6 @@ Until that policy and procedure are approved and exercised, stamped-PDF producti
 
 The owner must also decide how long to retain unlinkable verification events, pseudonymous audit
 and consent records, credential/revocation identifiers, batch metadata, and provider-side email
-events. No retention period for those records is inferred or configured by this implementation.
+events. Idempotent email attempts store a request UUID, credential ID, status, and timestamp without
+the recipient's email; keyed attempts are currently retained so a replay cannot accidentally send
+again. No retention period for these records is inferred or configured by this implementation.

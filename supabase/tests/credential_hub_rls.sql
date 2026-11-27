@@ -94,13 +94,38 @@ select throws_ok(
       where id = '30000000-0000-0000-0000-000000000002'$$,
     '23505', null, 'custom serial prefixes must be unique across events'
 );
+update public.achievements
+set serial_prefix = 'ctf/himasti/ach1'
+where id = '40000000-0000-0000-0000-000000000001';
+select is(
+    (select serial_prefix from public.achievements where id = '40000000-0000-0000-0000-000000000001'),
+    'CTF/HIMASTI/ACH1',
+    'achievement serial prefix is normalized to uppercase'
+);
+select throws_ok(
+    $$update public.achievements
+      set serial_prefix = 'CTF/HIMASTI/001'
+      where id = '40000000-0000-0000-0000-000000000002'$$,
+    '23505', null, 'achievement and event serial prefixes share global uniqueness'
+);
 update public.credentials
 set serial_number = 'TEST-000042'
 where id = '80000000-0000-0000-0000-000000000001';
 select is(
     (select serial_number from public.credentials where id = '80000000-0000-0000-0000-000000000001'),
-    'CTF/HIMASTI/001/000042',
-    'event serial prefix formats a serial using the atomically allocated sequence'
+    'CTF/HIMASTI/ACH1/000042',
+    'achievement serial prefix takes precedence over the event prefix'
+);
+update public.achievements
+set serial_prefix = null
+where id = '40000000-0000-0000-0000-000000000001';
+update public.credentials
+set serial_number = 'TEST-000043'
+where id = '80000000-0000-0000-0000-000000000001';
+select is(
+    (select serial_number from public.credentials where id = '80000000-0000-0000-0000-000000000001'),
+    'CTF/HIMASTI/001/000043',
+    'event serial prefix is used when the achievement has no override'
 );
 update public.events
 set serial_prefix = null
@@ -434,14 +459,14 @@ set local request.jwt.claims = '{"sub":"10000000-0000-0000-0000-000000000002","r
 select lives_ok($$update public.organizations set name = 'stolen' where id = '20000000-0000-0000-0000-000000000002'$$, 'viewer update attempt on another organization is filtered');
 select is((select name from public.organizations where id = '20000000-0000-0000-0000-000000000002'), null, 'viewer still cannot read or change another organization');
 select throws_ok($$delete from public.organizations where id = '20000000-0000-0000-0000-000000000002'$$, '42501', null, 'viewer cannot delete organizations');
-select lives_ok($$update public.events set name = 'viewer-stolen' where id = '30000000-0000-0000-0000-000000000001'$$, 'viewer cannot update even own organization events');
+select throws_ok($$update public.events set name = 'viewer-stolen' where id = '30000000-0000-0000-0000-000000000001'$$, '42501', null, 'event updates must use the audited RPC');
 select throws_ok($$delete from public.events where id = '30000000-0000-0000-0000-000000000001'$$, '42501', null, 'viewer cannot delete own organization events');
 select lives_ok($$update public.organization_members set role = 'owner' where organization_id = '20000000-0000-0000-0000-000000000002'$$, 'viewer membership update attempt is filtered');
 select is((select count(*)::int from public.organization_members where organization_id = '20000000-0000-0000-0000-000000000002'), 0, 'viewer cannot read or change another tenant membership');
 select lives_ok($$delete from public.organization_members where organization_id = '20000000-0000-0000-0000-000000000002'$$, 'viewer membership delete attempt is filtered');
 select lives_ok($$update public.issuer_keys set status = 'retired' where organization_id = '20000000-0000-0000-0000-000000000002'$$, 'viewer key update attempt is filtered');
 select throws_ok($$delete from public.issuer_keys where organization_id = '20000000-0000-0000-0000-000000000002'$$, '42501', null, 'viewer cannot delete keys');
-select lives_ok($$update public.events set name = 'stolen' where organization_id = '20000000-0000-0000-0000-000000000002'$$, 'viewer event update attempt is filtered');
+select throws_ok($$update public.events set name = 'stolen' where organization_id = '20000000-0000-0000-0000-000000000002'$$, '42501', null, 'viewer cannot update events directly');
 select is((select name from public.events where id = '30000000-0000-0000-0000-000000000002'), null, 'viewer cannot read or change another tenant event');
 select throws_ok($$delete from public.events where organization_id = '20000000-0000-0000-0000-000000000002'$$, '42501', null, 'viewer cannot delete events');
 select lives_ok($$update public.achievements set name = 'stolen' where organization_id = '20000000-0000-0000-0000-000000000002'$$, 'viewer achievement update attempt is filtered');
@@ -478,11 +503,26 @@ select lives_ok(
 );
 reset role;
 set local role service_role;
+insert into public.issuance_rows(
+    organization_id, batch_id, row_number, payload, idempotency_key, status
+)
+select
+    '20000000-0000-0000-0000-000000000001',
+    id,
+    1,
+    '{"email":"new@test.invalid","full_name":"New Recipient"}'::jsonb,
+    'issuer-row-unique',
+    'pending'
+from public.issuance_batches
+where organization_id = '20000000-0000-0000-0000-000000000001'
+  and created_by = '10000000-0000-0000-0000-000000000003'
+order by created_at desc
+limit 1;
 select lives_ok(
     $$select public.persist_issuance_row(
         '10000000-0000-0000-0000-000000000003',
         (select id from public.issuance_batches where organization_id = '20000000-0000-0000-0000-000000000001' and created_by = '10000000-0000-0000-0000-000000000003' order by created_at desc limit 1),
-        1, '{"email":"new@test.invalid"}'::jsonb, 'issuer-row-unique',
+        1, '{"email":"new@test.invalid","full_name":"New Recipient"}'::jsonb, 'issuer-row-unique',
         'New Recipient', 'new@test.invalid', 'hash-new', 'salt-new', 'skip',
         '81000000-0000-0000-0000-000000000001', now(), null,
         'unlisted', '{}'::jsonb, 'issuer-test-jws', 'key-a', 'hash-content', null
@@ -493,7 +533,7 @@ select is(
     public.persist_issuance_row(
         '10000000-0000-0000-0000-000000000003',
         (select id from public.issuance_batches where organization_id = '20000000-0000-0000-0000-000000000001' and created_by = '10000000-0000-0000-0000-000000000003' order by created_at desc limit 1),
-        1, '{"email":"new@test.invalid"}'::jsonb, 'issuer-row-unique',
+        1, '{"email":"new@test.invalid","full_name":"New Recipient"}'::jsonb, 'issuer-row-unique',
         'New Recipient', 'new@test.invalid', 'hash-new', 'salt-new', 'skip',
         '81000000-0000-0000-0000-000000000001', now(), null,
         'unlisted', '{}'::jsonb, 'issuer-test-jws', 'key-a', 'hash-content', null
@@ -517,7 +557,7 @@ select is(
     public.persist_issuance_row(
         '10000000-0000-0000-0000-000000000003',
         (select id from public.issuance_batches where organization_id = '20000000-0000-0000-0000-000000000001' and created_by = '10000000-0000-0000-0000-000000000003' order by created_at desc limit 1),
-        1, '{"email":"new@test.invalid"}'::jsonb, 'issuer-row-unique',
+        1, '{"email":"new@test.invalid","full_name":"New Recipient"}'::jsonb, 'issuer-row-unique',
         'New Recipient', 'new@test.invalid', 'hash-new', 'salt-new', 'skip',
         '81000000-0000-0000-0000-000000000001', now(), null,
         'unlisted', '{}'::jsonb, 'issuer-test-jws', 'key-a', 'hash-content', null
@@ -536,6 +576,124 @@ select is(
      order by created_at desc limit 1),
     1,
     'duplicate issuance submit does not increment batch progress twice'
+);
+insert into public.issuance_batches(
+    id, organization_id, event_id, achievement_id, created_by, total
+)
+values (
+    '70000000-0000-0000-0000-000000000003',
+    '20000000-0000-0000-0000-000000000001',
+    '30000000-0000-0000-0000-000000000001',
+    '40000000-0000-0000-0000-000000000001',
+    '10000000-0000-0000-0000-000000000003',
+    1
+);
+insert into public.issuance_rows(
+    organization_id, batch_id, row_number, payload, idempotency_key, status
+)
+values (
+    '20000000-0000-0000-0000-000000000001',
+    '70000000-0000-0000-0000-000000000003',
+    1,
+    '{"email":"overflow@test.invalid","full_name":"Overflow"}'::jsonb,
+    'issuer-row-overflow',
+    'pending'
+);
+update public.organizations
+set next_serial_number = 1000000
+where id = '20000000-0000-0000-0000-000000000001';
+select is(
+    public.persist_issuance_row(
+        '10000000-0000-0000-0000-000000000003',
+        '70000000-0000-0000-0000-000000000003',
+        1, '{"email":"overflow@test.invalid","full_name":"Overflow"}'::jsonb,
+        'issuer-row-overflow',
+        'Overflow', 'overflow@test.invalid', 'hash-overflow', 'salt-overflow', 'skip',
+        '81000000-0000-0000-0000-000000000004', now(), null,
+        'unlisted', '{}'::jsonb, 'overflow-test-jws', 'key-a', 'hash-overflow-content', null
+    )->>'serial_number',
+    'TSQ-' || extract(year from now())::text || '-1000000',
+    'serial suffix keeps every digit after the six-digit boundary'
+);
+set local request.jwt.claim.role = 'service_role';
+set local request.jwt.claims = '{"role":"service_role"}';
+select is(
+    public.create_issuance_batch(
+        '10000000-0000-0000-0000-000000000003',
+        '20000000-0000-0000-0000-000000000001',
+        '30000000-0000-0000-0000-000000000001',
+        '40000000-0000-0000-0000-000000000001',
+        1,
+        '{"duplicatePolicy":"skip","visibility":"unlisted","sendEmail":false}'::jsonb,
+        'durable-batch-test'
+    )->>'status',
+    'draft',
+    'batch creation RPC creates an idempotent draft'
+);
+select is(
+    public.create_issuance_batch(
+        '10000000-0000-0000-0000-000000000003',
+        '20000000-0000-0000-0000-000000000001',
+        '30000000-0000-0000-0000-000000000001',
+        '40000000-0000-0000-0000-000000000001',
+        1,
+        '{"duplicatePolicy":"skip","visibility":"unlisted","sendEmail":false}'::jsonb,
+        'durable-batch-test'
+    )->>'id',
+    (select id::text from public.issuance_batches where idempotency_key = 'durable-batch-test'),
+    'replaying batch creation returns the existing draft'
+);
+select is(
+    public.stage_issuance_rows(
+        '10000000-0000-0000-0000-000000000003',
+        (select id from public.issuance_batches where idempotency_key = 'durable-batch-test'),
+        jsonb_build_array(jsonb_build_object(
+            'rowNumber', 1,
+            'payload', '{"full_name":"Staged Person","email":"staged@test.invalid"}'::jsonb,
+            'idempotencyKey', repeat('a', 64)
+        ))
+    ),
+    1,
+    'issuance staging persists a bounded chunk'
+);
+select is(
+    public.stage_issuance_rows(
+        '10000000-0000-0000-0000-000000000003',
+        (select id from public.issuance_batches where idempotency_key = 'durable-batch-test'),
+        jsonb_build_array(jsonb_build_object(
+            'rowNumber', 1,
+            'payload', '{"full_name":"Staged Person","email":"staged@test.invalid"}'::jsonb,
+            'idempotencyKey', repeat('a', 64)
+        ))
+    ),
+    1,
+    'identical issuance staging replays without duplicating a row'
+);
+select throws_ok(
+    $$select public.stage_issuance_rows(
+        '10000000-0000-0000-0000-000000000003',
+        (select id from public.issuance_batches where idempotency_key = 'durable-batch-test'),
+        jsonb_build_array(jsonb_build_object(
+            'rowNumber', 1,
+            'payload', '{"full_name":"Changed Person","email":"staged@test.invalid"}'::jsonb,
+            'idempotencyKey', repeat('a', 64)
+        ))
+    )$$,
+    '23505', null, 'staged participant rows cannot be changed after persistence'
+);
+select is(
+    public.finalize_issuance_batch(
+        '10000000-0000-0000-0000-000000000003',
+        (select id from public.issuance_batches where idempotency_key = 'durable-batch-test')
+    )->>'status',
+    'queued',
+    'complete draft batch becomes queued atomically'
+);
+select is(
+    (select count(*)::int from public.issuance_rows
+     where batch_id = (select id from public.issuance_batches where idempotency_key = 'durable-batch-test')),
+    1,
+    'resumed issuance staging remains one row per batch row number'
 );
 insert into public.email_events (organization_id, credential_id, type, payload)
 values (
@@ -995,6 +1153,45 @@ select isnt(
     null,
     'email quota uses a rolling 24-hour window and releases expired attempts'
 );
+update public.email_send_attempts
+set created_at = now() - interval '25 hours'
+where organization_id = '20000000-0000-0000-0000-000000000001'
+  and request_key is null;
+select is(
+    public.reserve_idempotent_credential_email(
+        '20000000-0000-0000-0000-000000000001',
+        '81000000-0000-0000-0000-000000000001',
+        2,
+        'batch-email-test'
+    )->>'created',
+    'true',
+    'credential email request reserves a new idempotent attempt'
+);
+select lives_ok(
+    $$select public.complete_email_send(
+      (select id from public.email_send_attempts where request_key = 'batch-email-test'),
+      'provider-idempotent', 'sent', null, true
+    )$$,
+    'idempotent credential email attempt records its provider result'
+);
+select is(
+    public.reserve_idempotent_credential_email(
+        '20000000-0000-0000-0000-000000000001',
+        '81000000-0000-0000-0000-000000000001',
+        2,
+        'batch-email-test'
+    )->>'created',
+    'false',
+    'replaying the same email request key does not create another attempt'
+);
+select is(
+    (select count(*)::int from public.email_send_attempts
+     where organization_id = '20000000-0000-0000-0000-000000000001'
+       and credential_id = '81000000-0000-0000-0000-000000000001'
+       and request_key = 'batch-email-test'),
+    1,
+    'idempotent email replay keeps exactly one reservation'
+);
 select is(
     public.create_recipient_access_token('81000000-0000-0000-0000-000000000001', repeat('a', 64))->>'email',
     'new@test.invalid',
@@ -1316,6 +1513,56 @@ select is(
     0,
     'recipient anonymization deletes active management sessions'
 );
+
+set local role authenticated;
+set local request.jwt.claims = '{"sub":"10000000-0000-0000-0000-000000000003","role":"authenticated"}';
+select lives_ok(
+    $$select public.update_event(
+        '30000000-0000-0000-0000-000000000001',
+        '  Updated   Event  ',
+        null,
+        '  Main   Hall ',
+        null,
+        ' ctf/himasti/updated '
+    )$$,
+    'issuer can edit event through the audited update RPC'
+);
+reset role;
+select is(
+    (select name from public.events where id = '30000000-0000-0000-0000-000000000001'),
+    'Updated Event',
+    'event update RPC normalizes event name'
+);
+select is(
+    (select serial_prefix from public.events where id = '30000000-0000-0000-0000-000000000001'),
+    'CTF/HIMASTI/UPDATED',
+    'event update RPC normalizes serial prefix'
+);
+select is(
+    (select count(*)::int from public.audit_logs
+     where actor_id = '10000000-0000-0000-0000-000000000003'
+       and action = 'event.updated'
+       and entity_id = '30000000-0000-0000-0000-000000000001'
+       and metadata->'changed_fields' ? 'serial_prefix'),
+    1,
+    'event update writes a PII-free audit record with changed field names'
+);
+set local role authenticated;
+set local request.jwt.claims = '{"sub":"10000000-0000-0000-0000-000000000002","role":"authenticated"}';
+select throws_ok(
+    $$select public.update_event(
+        '30000000-0000-0000-0000-000000000001',
+        'Unauthorized Event',
+        null,
+        null,
+        null,
+        null
+    )$$,
+    '42501',
+    'Insufficient organization role',
+    'viewer cannot update an event through the audited RPC'
+);
+reset role;
 
 select * from finish();
 rollback;

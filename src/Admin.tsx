@@ -26,8 +26,26 @@ type Achievement = {
   event_id: string | null
   category: string | null
   criteria_narrative: string | null
+  serial_prefix: string | null
 }
-type Batch = { id: string; created_at: string; status: string; total: number; processed_count: number; succeeded: number; failed: number }
+type Batch = {
+  id: string
+  event_id: string | null
+  achievement_id: string
+  created_at: string
+  status: string
+  total: number
+  processed_count: number
+  succeeded: number
+  failed: number
+  options: { sendEmail?: boolean }
+}
+type BatchOutcome = {
+  rowNumber: number
+  status: string
+  errorCode: string | null
+  serialNumber: string | null
+}
 type Credential = { id: string; serial_number: string; issued_at: string | null; status: string; visibility: string; achievement_id: string | null }
 type OrganizationMember = { user_id: string; role: 'owner' | 'admin' | 'issuer' | 'viewer'; joined_at: string }
 type Recipient = { id: string; full_name: string | null; email: string | null; anonymized_at: string | null }
@@ -76,8 +94,10 @@ export default function Admin({ session, onSignOut }: { session: Session; onSign
   const [eventLocation, setEventLocation] = useState('')
   const [eventDescription, setEventDescription] = useState('')
   const [eventSerialPrefix, setEventSerialPrefix] = useState('')
+  const [eventEditingId, setEventEditingId] = useState('')
   const [achievementName, setAchievementName] = useState('')
   const [achievementCategory, setAchievementCategory] = useState('')
+  const [achievementSerialPrefix, setAchievementSerialPrefix] = useState('')
   const [achievementDescription, setAchievementDescription] = useState('')
   const [achievementCriteria, setAchievementCriteria] = useState('')
   const [achievementEventId, setAchievementEventId] = useState('')
@@ -89,6 +109,13 @@ export default function Admin({ session, onSignOut }: { session: Session; onSign
   const [memberRole, setMemberRole] = useState<'admin' | 'issuer' | 'viewer'>('viewer')
   const [selectedEvent, setSelectedEvent] = useState('')
   const [selectedAchievement, setSelectedAchievement] = useState('')
+  const [resumeBatchId, setResumeBatchId] = useState('')
+  const [pendingBatchKey, setPendingBatchKey] = useState('')
+  const [batchDetailId, setBatchDetailId] = useState('')
+  const [batchDetailPage, setBatchDetailPage] = useState(0)
+  const [batchOutcomes, setBatchOutcomes] = useState<BatchOutcome[]>([])
+  const [resendRequestKeys, setResendRequestKeys] = useState<Record<string, string>>({})
+  const [pendingEmailIds, setPendingEmailIds] = useState<Record<string, boolean>>({})
   const [duplicatePolicy, setDuplicatePolicy] = useState<'skip' | 'reissue' | 'error'>('skip')
   const [visibility, setVisibility] = useState<'unlisted' | 'public'>('unlisted')
   const [sendEmail, setSendEmail] = useState(false)
@@ -107,8 +134,8 @@ export default function Admin({ session, onSignOut }: { session: Session; onSign
     setError('')
     const [eventResult, achievementResult, batchResult, credentialResult, memberResult] = await Promise.all([
       supabase.from('events').select('id, name, event_date, location, description, serial_prefix, status').eq('organization_id', organizationId).order('created_at', { ascending: false }),
-      supabase.from('achievements').select('id, name, event_id, category, criteria_narrative').eq('organization_id', organizationId).order('created_at', { ascending: false }),
-      supabase.from('issuance_batches').select('id, created_at, status, total, processed_count, succeeded, failed').eq('organization_id', organizationId).order('created_at', { ascending: false }).limit(10),
+      supabase.from('achievements').select('id, name, event_id, category, criteria_narrative, serial_prefix').eq('organization_id', organizationId).order('created_at', { ascending: false }),
+      supabase.from('issuance_batches').select('id, event_id, achievement_id, created_at, status, total, processed_count, succeeded, failed, options').eq('organization_id', organizationId).order('created_at', { ascending: false }).limit(10),
       supabase.from('credentials').select('id, serial_number, issued_at, status, visibility, achievement_id').eq('organization_id', organizationId).order('issued_at', { ascending: false }).limit(20),
       supabase.from('organization_members').select('user_id, role, joined_at').eq('organization_id', organizationId).order('joined_at'),
     ])
@@ -241,6 +268,29 @@ export default function Admin({ session, onSignOut }: { session: Session; onSign
   const dashboardRole = selectedRole ?? 'viewer'
   const canIssue = selectedRole === 'owner' || selectedRole === 'admin' || selectedRole === 'issuer'
   const canRevoke = selectedRole === 'owner' || selectedRole === 'admin'
+  const selectedAchievementRecord = achievements.find((item) => item.id === selectedAchievement)
+  const activeSerialPrefix = selectedAchievementRecord?.serial_prefix ||
+    events.find((item) => item.id === selectedEvent)?.serial_prefix
+
+  function editEvent(item: EventRecord) {
+    setEventEditingId(item.id)
+    setEventName(item.name)
+    setEventDate(item.event_date ?? '')
+    setEventLocation(item.location ?? '')
+    setEventDescription(item.description ?? '')
+    setEventSerialPrefix(item.serial_prefix ?? '')
+    setError('')
+    setMessage('Event edits apply to future issuances; existing credential serials and signed content are unchanged.')
+  }
+
+  function cancelEventEdit() {
+    setEventEditingId('')
+    setEventName('')
+    setEventDate('')
+    setEventLocation('')
+    setEventDescription('')
+    setEventSerialPrefix('')
+  }
 
   async function createEvent(event: FormEvent<HTMLFormElement>) {
     event.preventDefault()
@@ -248,24 +298,44 @@ export default function Admin({ session, onSignOut }: { session: Session; onSign
     setBusy(true)
     setError('')
     try {
-      const { data: createdEvent, error: insertError } = await supabase.from('events').insert({
-        organization_id: organization.id,
+      const eventValues = {
         name: eventName.trim().replace(/\s+/g, ' '),
         event_date: eventDate || null,
         location: eventLocation.trim().replace(/\s+/g, ' ') || null,
         description: eventDescription.trim().replace(/\s+/g, ' ') || null,
         serial_prefix: eventSerialPrefix.trim() || null,
-        status: 'active',
-      }).select('id').single()
-      if (insertError) throw insertError
+      }
+      let eventId = eventEditingId
+      if (eventEditingId) {
+        const { error: updateError } = await supabase.rpc('update_event', {
+          p_event_id: eventEditingId,
+          p_name: eventValues.name,
+          p_event_date: eventValues.event_date,
+          p_location: eventValues.location,
+          p_description: eventValues.description,
+          p_serial_prefix: eventValues.serial_prefix,
+        })
+        if (updateError) throw updateError
+      } else {
+        const { data: createdEvent, error: insertError } = await supabase.from('events').insert({
+          organization_id: organization.id,
+          ...eventValues,
+          status: 'active',
+        }).select('id').single()
+        if (insertError) throw insertError
+        eventId = createdEvent.id
+      }
+      setEventEditingId('')
       setEventName('')
       setEventDate('')
       setEventLocation('')
       setEventDescription('')
       setEventSerialPrefix('')
-      setSelectedEvent(createdEvent.id)
-      setAchievementEventId(createdEvent.id)
-      setMessage('Event created.')
+      if (!eventEditingId) {
+        setSelectedEvent(eventId)
+        setAchievementEventId(eventId)
+      }
+      setMessage(eventEditingId ? 'Event updated. Existing credential serials are unchanged.' : 'Event created.')
       await loadDashboard(organization.id, dashboardRole)
     } catch (cause) {
       setError(messageOf(cause))
@@ -285,6 +355,7 @@ export default function Admin({ session, onSignOut }: { session: Session; onSign
         event_id: achievementEventId || null,
         name: achievementName.trim().replace(/\s+/g, ' '),
         category: achievementCategory.trim().replace(/\s+/g, ' ') || null,
+        serial_prefix: achievementSerialPrefix.trim() || null,
         description: achievementDescription.trim(),
         criteria_narrative: achievementCriteria.trim(),
         status: 'active',
@@ -292,6 +363,7 @@ export default function Admin({ session, onSignOut }: { session: Session; onSign
       if (insertError) throw insertError
       setAchievementName('')
       setAchievementCategory('')
+      setAchievementSerialPrefix('')
       setAchievementDescription('')
       setAchievementCriteria('')
       setMessage('Achievement created.')
@@ -353,65 +425,110 @@ export default function Admin({ session, onSignOut }: { session: Session; onSign
     })
   }
 
+  async function sendBatchEmails(batchId: string, requestKey: string) {
+    if (!supabase || !organization) return { sent: 0, failed: 0, throttled: 0, pending: 0 }
+    const { data: issued, error: issuedError } = await supabase
+      .from('credentials')
+      .select('id')
+      .eq('organization_id', organization.id)
+      .eq('batch_id', batchId)
+      .eq('status', 'issued')
+    if (issuedError) throw issuedError
+    const totals = { sent: 0, failed: 0, throttled: 0, pending: 0 }
+    for (let offset = 0; offset < (issued ?? []).length; offset += 50) {
+      const { data: emailResult, error: emailError } = await supabase.functions.invoke<typeof totals>('send-emails', {
+        body: {
+          organizationId: organization.id,
+          credentialIds: issued!.slice(offset, offset + 50).map((credential) => credential.id),
+          requestKey,
+        },
+      })
+      if (emailError) throw emailError
+      totals.sent += emailResult?.sent ?? 0
+      totals.failed += emailResult?.failed ?? 0
+      totals.throttled += emailResult?.throttled ?? 0
+      totals.pending += emailResult?.pending ?? 0
+    }
+    return totals
+  }
+
+  async function processBatch(batchId: string) {
+    if (!supabase) return
+    for (let attempt = 0; attempt < 20; attempt += 1) {
+      const { data, error: processError } = await supabase.functions.invoke<{
+        complete: boolean
+        processed_count: number
+        total: number
+        rows: Array<{ status: string }>
+      }>('issue-batch', {
+        body: { action: 'process', batchId, limit: 50 },
+      })
+      if (processError) throw processError
+      if (!data) throw new Error('Issuance service returned no batch progress.')
+      setMessage(`Processing ${data.processed_count} of ${data.total} recipients…`)
+      if (data.complete) return
+      if (!data.rows.length) throw new Error('Issuance batch made no progress. Resume it from batch history.')
+    }
+    throw new Error('Issuance batch was not completed within the processing limit. Resume it from batch history.')
+  }
+
   async function issueCsv() {
     if (!supabase || !organization || !selectedEvent || !selectedAchievement || !rows.length) return
     setBusy(true)
     setError('')
-    setMessage('Creating issuance batch…')
+    setMessage(resumeBatchId ? 'Staging participants into the draft batch…' : 'Creating issuance batch…')
     try {
-      const { data: created, error: createError } = await supabase.functions.invoke<{ id: string }>('issue-batch', {
-        body: {
-          action: 'create',
-          organizationId: organization.id,
-          eventId: selectedEvent,
-          achievementId: selectedAchievement,
-          rowsTotal: rows.length,
-          options: { duplicatePolicy, visibility, sendEmail },
-        },
-      })
-      if (createError) throw createError
-      if (!created?.id) throw new Error('Issuance service did not return a batch ID.')
+      const shouldSendEmail = resumeBatchId
+        ? batches.find((batch) => batch.id === resumeBatchId)?.options?.sendEmail ?? false
+        : sendEmail
+      let batchId = resumeBatchId
+      if (!batchId) {
+        const requestKey = pendingBatchKey || crypto.randomUUID()
+        setPendingBatchKey(requestKey)
+        const { data: created, error: createError } = await supabase.functions.invoke<{ id: string }>('issue-batch', {
+          body: {
+            action: 'create',
+            organizationId: organization.id,
+            eventId: selectedEvent,
+            achievementId: selectedAchievement,
+            rowsTotal: rows.length,
+            idempotencyKey: requestKey,
+            options: { duplicatePolicy, visibility, sendEmail },
+          },
+        })
+        if (createError) throw createError
+        if (!created?.id) throw new Error('Issuance service did not return a batch ID.')
+        batchId = created.id
+        setResumeBatchId(batchId)
+      }
+
       for (let offset = 0; offset < rows.length; offset += 50) {
         const chunk = rows.slice(offset, offset + 50).map((payload, index) => ({
           rowNumber: offset + index + 1,
           payload,
         }))
-        const { data, error: processError } = await supabase.functions.invoke<{ rows: Array<{ status: string }> }>('issue-batch', {
-          body: { action: 'process', batchId: created.id, rows: chunk },
+        const { error: stageError } = await supabase.functions.invoke('issue-batch', {
+          body: { action: 'stage', batchId, rows: chunk },
         })
-        if (processError) throw processError
-        const issuedThrough = Math.min(offset + chunk.length, rows.length)
-        setMessage(`Processing ${issuedThrough} of ${rows.length} recipients…`)
-        if (!data) throw new Error('Issuance service returned no batch progress.')
+        if (stageError) throw stageError
+        setMessage(`Saving ${Math.min(offset + chunk.length, rows.length)} of ${rows.length} participant rows…`)
       }
-      if (sendEmail) {
-        const { data: issued, error: issuedError } = await supabase
-          .from('credentials')
-          .select('id')
-          .eq('organization_id', organization.id)
-          .eq('batch_id', created.id)
-          .eq('status', 'issued')
-        if (issuedError) throw issuedError
-        if (issued?.length) {
-          const totals = { sent: 0, failed: 0, throttled: 0 }
-          for (let offset = 0; offset < issued.length; offset += 50) {
-            const { data: emailResult, error: emailError } = await supabase.functions.invoke<typeof totals>('send-emails', {
-              body: {
-                organizationId: organization.id,
-                credentialIds: issued.slice(offset, offset + 50).map((credential) => credential.id),
-              },
-            })
-            if (emailError) throw emailError
-            totals.sent += emailResult?.sent ?? 0
-            totals.failed += emailResult?.failed ?? 0
-            totals.throttled += emailResult?.throttled ?? 0
-          }
-          setMessage(`Batch completed. Emails sent: ${totals.sent}; failed: ${totals.failed}; throttled by daily limit: ${totals.throttled}.`)
-        }
-      }
+
+      const { error: finalizeError } = await supabase.functions.invoke('issue-batch', {
+        body: { action: 'finalize', batchId },
+      })
+      if (finalizeError) throw finalizeError
+      setResumeBatchId('')
+      setPendingBatchKey('')
       setRows([])
       setCsvName('')
-      if (!sendEmail) setMessage('Issuance batch processed. Failed rows can be retried from the batch list.')
+      await processBatch(batchId)
+      const totals = shouldSendEmail
+        ? await sendBatchEmails(batchId, batchId)
+        : { sent: 0, failed: 0, throttled: 0, pending: 0 }
+      setMessage(shouldSendEmail
+        ? `Batch completed. Emails sent: ${totals.sent}; failed: ${totals.failed}; throttled: ${totals.throttled}; pending confirmation: ${totals.pending}.`
+        : 'Issuance batch processed. Failed rows can be retried from the batch list.')
       await loadDashboard(organization.id, dashboardRole)
     } catch (cause) {
       const primaryError = messageOf(cause)
@@ -429,6 +546,26 @@ export default function Admin({ session, onSignOut }: { session: Session; onSign
     }
   }
 
+  async function continueBatch(batch: Batch) {
+    if (!supabase || !organization) return
+    setBusy(true)
+    setError('')
+    try {
+      await processBatch(batch.id)
+      if (batch.options?.sendEmail) {
+        const totals = await sendBatchEmails(batch.id, batch.id)
+        setMessage(`Batch resumed. Emails sent: ${totals.sent}; failed: ${totals.failed}; throttled: ${totals.throttled}; pending confirmation: ${totals.pending}.`)
+      } else {
+        setMessage('Issuance batch resumed.')
+      }
+      await loadDashboard(organization.id, dashboardRole)
+    } catch (cause) {
+      setError(messageOf(cause))
+    } finally {
+      setBusy(false)
+    }
+  }
+
   async function retryBatch(batchId: string) {
     if (!supabase || !organization) return
     setBusy(true)
@@ -438,13 +575,76 @@ export default function Admin({ session, onSignOut }: { session: Session; onSign
         body: { action: 'retry-failed', batchId, limit: 50 },
       })
       if (retryError) throw retryError
-      setMessage('Retry request completed.')
+      setMessage('Retry request completed. Remaining failures can be retried again from this batch.')
       await loadDashboard(organization.id, dashboardRole)
     } catch (cause) {
       setError(messageOf(cause))
     } finally {
       setBusy(false)
     }
+  }
+
+  async function resendCredentialEmail(credentialId: string, startNewAttempt = false) {
+    if (!supabase || !organization) return
+    setBusy(true)
+    setError('')
+    try {
+      const requestKey = startNewAttempt
+        ? crypto.randomUUID()
+        : resendRequestKeys[credentialId] ?? crypto.randomUUID()
+      setResendRequestKeys((current) => ({ ...current, [credentialId]: requestKey }))
+      const { data, error: invokeError } = await supabase.functions.invoke<{
+        sent: number
+        failed: number
+        throttled: number
+        pending: number
+      }>('send-emails', {
+        body: {
+          organizationId: organization.id,
+          credentialIds: [credentialId],
+          requestKey,
+        },
+      })
+      if (invokeError) throw invokeError
+      if (data?.pending) {
+        setPendingEmailIds((current) => ({ ...current, [credentialId]: true }))
+      } else {
+        setResendRequestKeys((current) => {
+          const next = { ...current }
+          delete next[credentialId]
+          return next
+        })
+        setPendingEmailIds((current) => {
+          const next = { ...current }
+          delete next[credentialId]
+          return next
+        })
+      }
+      setMessage(data?.sent
+        ? 'Credential email sent.'
+        : data?.throttled
+          ? 'Email not sent because the daily sending limit was reached.'
+          : data?.pending
+            ? 'The earlier send outcome is uncertain; no duplicate was sent. A new attempt may deliver a duplicate.'
+            : 'Email could not be sent. Use Resend to start a new attempt.')
+    } catch (cause) {
+      setError(messageOf(cause))
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  async function loadBatchOutcomes(batchId: string, page: number) {
+    if (!supabase) return
+    const { data, error: invokeError } = await supabase.functions.invoke<{
+      rows: BatchOutcome[]
+    }>('issue-batch', {
+      body: { action: 'list-rows', batchId, offset: page * 50, limit: 50 },
+    })
+    if (invokeError) throw invokeError
+    setBatchOutcomes(data?.rows ?? [])
+    setBatchDetailId(batchId)
+    setBatchDetailPage(page)
   }
 
   async function addMember(event: FormEvent<HTMLFormElement>) {
@@ -653,26 +853,31 @@ export default function Admin({ session, onSignOut }: { session: Session; onSign
         {canIssue && (
           <div className="admin-grid">
             <form className="admin-card admin-form" onSubmit={(event) => void createEvent(event)}>
-              <span className="eyebrow">EVENTS</span><h2>Create event</h2>
+              <span className="eyebrow">EVENTS</span><h2>{eventEditingId ? 'Edit event' : 'Create event'}</h2>
               <label>Event name<input value={eventName} onChange={(event) => setEventName(event.target.value)} required maxLength={200} /></label>
               <label>Event date<input type="date" value={eventDate} onChange={(event) => setEventDate(event.target.value)} /></label>
               <label>Location<input value={eventLocation} onChange={(event) => setEventLocation(event.target.value)} maxLength={200} /></label>
               <label>Description<textarea value={eventDescription} onChange={(event) => setEventDescription(event.target.value)} maxLength={2000} rows={2} /></label>
               <label>Credential serial prefix (optional)<input value={eventSerialPrefix} onChange={(event) => setEventSerialPrefix(event.target.value.toUpperCase())} placeholder="CTF/HIMASTI/001" pattern="[A-Z0-9][A-Z0-9._-]*(/[A-Z0-9][A-Z0-9._-]*){0,3}" maxLength={80} title="Use 1–4 slash-separated codes with letters, numbers, dot, underscore, or hyphen." /></label>
-              <p className="stamping-note">Issued serials will look like <code>CTF/HIMASTI/001/000123</code>. The final number is allocated atomically from the organization-wide sequence; it is not a participant ID. Prefixes must be unique across events.</p>
-              <button className="button button-primary" disabled={busy || !eventName.trim()}>{busy ? 'Saving…' : 'Add event'}</button>
-              <ul className="admin-list">{events.length ? events.slice(0, 5).map((item) => <li key={item.id}><span>{item.name}</span><small>{[item.event_date, item.location, item.serial_prefix].filter(Boolean).join(' · ') || item.status}</small></li>) : <li><span>No events yet.</span></li>}</ul>
+              <p className="stamping-note">Issued serials will look like <code>CTF/HIMASTI/001/000123</code>. The final number is allocated atomically from the organization-wide sequence; it is not a participant ID. Prefixes must be unique across events and achievements. Changing a prefix affects future credentials only.</p>
+              <div className="credential-actions">
+                <button className="button button-primary" disabled={busy || !eventName.trim()}>{busy ? 'Saving…' : eventEditingId ? 'Save event' : 'Add event'}</button>
+                {eventEditingId && <button className="button button-quiet" type="button" disabled={busy} onClick={cancelEventEdit}>Cancel edit</button>}
+              </div>
+              <ul className="admin-list">{events.length ? events.slice(0, 10).map((item) => <li key={item.id}><span>{item.name}</span><small>{[item.event_date, item.location, item.serial_prefix].filter(Boolean).join(' · ') || item.status}</small>{canIssue && <button className="button button-quiet" type="button" disabled={busy} onClick={() => editEvent(item)}>Edit</button>}</li>) : <li><span>No events yet.</span></li>}</ul>
             </form>
 
             <form className="admin-card admin-form" onSubmit={(event) => void createAchievement(event)}>
               <span className="eyebrow">CERTIFICATE CATEGORIES</span><h2>Create achievement</h2>
               <label>Achievement name<input value={achievementName} onChange={(event) => setAchievementName(event.target.value)} required maxLength={200} /></label>
               <label>Category<input value={achievementCategory} onChange={(event) => setAchievementCategory(event.target.value)} placeholder="Participant, Speaker, Winner" maxLength={100} /></label>
+              <label>Achievement serial prefix (optional)<input value={achievementSerialPrefix} onChange={(event) => setAchievementSerialPrefix(event.target.value.toUpperCase())} placeholder="CTF/HIMASTI/WINNER" pattern="[A-Z0-9][A-Z0-9._-]*(/[A-Z0-9][A-Z0-9._-]*){0,3}" maxLength={80} title="Use 1–4 slash-separated codes with letters, numbers, dot, underscore, or hyphen." /></label>
+              <p className="stamping-note">An achievement prefix overrides its event prefix for new credentials. If blank, the event prefix applies. Prefixes are unique across events and achievements.</p>
               <label>Event<select value={achievementEventId} onChange={(event) => setAchievementEventId(event.target.value)}><option value="">Not linked to an event</option>{events.map((item) => <option value={item.id} key={item.id}>{item.name}</option>)}</select></label>
               <label>Description<textarea value={achievementDescription} onChange={(event) => setAchievementDescription(event.target.value)} required maxLength={2000} rows={2} /></label>
               <label>Criteria narrative<textarea value={achievementCriteria} onChange={(event) => setAchievementCriteria(event.target.value)} required maxLength={4000} rows={2} /></label>
               <button className="button button-primary" disabled={busy || !achievementName.trim() || !achievementDescription.trim() || !achievementCriteria.trim()}>{busy ? 'Saving…' : 'Add achievement'}</button>
-              <ul className="admin-list">{achievements.length ? achievements.slice(0, 5).map((item) => <li key={item.id}><span>{item.category ? `${item.category} · ` : ''}{item.name}</span><small>{item.criteria_narrative ? 'Ready to issue' : 'Add criteria before issue'}</small></li>) : <li><span>No achievements yet.</span></li>}</ul>
+              <ul className="admin-list">{achievements.length ? achievements.slice(0, 5).map((item) => <li key={item.id}><span>{item.category ? `${item.category} · ` : ''}{item.name}</span><small>{[item.criteria_narrative ? 'Ready to issue' : 'Add criteria before issue', item.serial_prefix ? `Prefix ${item.serial_prefix}` : null].filter(Boolean).join(' · ')}</small></li>) : <li><span>No achievements yet.</span></li>}</ul>
             </form>
           </div>
         )}
@@ -719,8 +924,8 @@ export default function Admin({ session, onSignOut }: { session: Session; onSign
               <label>Duplicate policy<select value={duplicatePolicy} onChange={(event) => setDuplicatePolicy(event.target.value as typeof duplicatePolicy)}><option value="skip">Skip duplicates (default)</option><option value="reissue">Reissue</option><option value="error">Mark as error</option></select></label>
               <label>Visibility<select value={visibility} onChange={(event) => setVisibility(event.target.value as typeof visibility)}><option value="unlisted">Unlisted (default)</option><option value="public">Public</option></select></label>
             </div>
-            {events.find((item) => item.id === selectedEvent)?.serial_prefix && (
-              <p className="stamping-note">Serial format for this event: <code>{events.find((item) => item.id === selectedEvent)?.serial_prefix}/000123</code>. The numeric suffix is globally allocated within this organization and does not contain participant data.</p>
+            {activeSerialPrefix && (
+              <p className="stamping-note">Serial format for this achievement: <code>{activeSerialPrefix}/000123</code>. Achievement prefix takes precedence over the event prefix. The numeric suffix is globally allocated within this organization and does not contain participant data.</p>
             )}
             <label className="email-option"><input type="checkbox" checked={sendEmail} onChange={(event) => setSendEmail(event.target.checked)} /> Send credential emails after successful issuance (daily plan limit applies)</label>
             <form className="participant-entry-form" onSubmit={addParticipant}>
@@ -731,6 +936,8 @@ export default function Admin({ session, onSignOut }: { session: Session; onSign
             </form>
             <p className="stamping-note">For a CSV, required columns: <code>full_name,email</code>. Optional: <code>external_id,issued_on,expires_on</code>. Add one row per participant in the selected category; a category/achievement is issued as its own batch. Rows are processed in server-side chunks of 50.</p>
             <label className="csv-upload">{rows.length ? 'Replace participant list with CSV' : 'Import participant CSV'}<input type="file" accept=".csv,text/csv" onChange={(event) => void readCsv(event.target.files?.[0])} /></label>
+            {resumeBatchId && <p className="stamping-note">Resuming draft batch <code>{resumeBatchId.slice(0, 8)}</code>. Re-upload the same participant file to continue staging. Staged participant data cannot be changed; start a new batch for corrections.</p>}
+            {(resumeBatchId || pendingBatchKey) && <button className="button button-quiet" type="button" disabled={busy} onClick={() => { setResumeBatchId(''); setPendingBatchKey(''); setMessage('A new batch will be created on the next issuance.'); }}>Start a new batch instead</button>}
             {csvName && <span className="csv-summary">{csvName} · {rows.length} rows ready</span>}
             {rows.length > 0 && (
               <div className="participant-review">
@@ -778,7 +985,58 @@ export default function Admin({ session, onSignOut }: { session: Session; onSign
 
         <section className="admin-card batch-card"><span className="eyebrow">ISSUANCE HISTORY</span><h2>Recent batches</h2>
           {batches.length ? batches.map((batch) => (
-            <div className="batch-row" key={batch.id}><div><strong>{batch.status.replaceAll('_', ' ')}</strong><small>{new Date(batch.created_at).toLocaleString()} · {batch.processed_count}/{batch.total} processed · {batch.succeeded} issued · {batch.failed} failed</small></div>{batch.failed > 0 && canIssue && <button className="button button-secondary" disabled={busy} onClick={() => void retryBatch(batch.id)}>Retry failed rows</button>}</div>
+            <div className="batch-history-item" key={batch.id}>
+              <div className="batch-row">
+                <div><strong>{batch.status.replaceAll('_', ' ')}</strong><small>{new Date(batch.created_at).toLocaleString()} · {batch.processed_count}/{batch.total} processed · {batch.succeeded} issued · {batch.failed} failed</small></div>
+                <div className="credential-actions">
+                  {canIssue && batch.status === 'draft' && <button className="button button-secondary" disabled={busy || !batch.event_id} onClick={() => {
+                    if (batch.event_id) setSelectedEvent(batch.event_id)
+                    setSelectedAchievement(batch.achievement_id)
+                    setResumeBatchId(batch.id)
+                    setMessage('Draft selected. Re-upload the same participant file to continue staging.')
+                  }}>Resume upload</button>}
+                  {canIssue && ['queued', 'processing'].includes(batch.status) && <button className="button button-secondary" disabled={busy} onClick={() => void continueBatch(batch)}>Continue issuance</button>}
+                  {canIssue && batch.failed > 0 && <button className="button button-secondary" disabled={busy} onClick={() => void retryBatch(batch.id)}>Retry failed rows</button>}
+                  {canIssue && batch.options?.sendEmail && ['completed', 'completed_with_errors'].includes(batch.status) && <button className="button button-secondary" disabled={busy} onClick={async () => {
+                    setBusy(true)
+                    setError('')
+                    try {
+                      const totals = await sendBatchEmails(batch.id, batch.id)
+                      setMessage(`Email run checked. Sent: ${totals.sent}; failed: ${totals.failed}; throttled: ${totals.throttled}; pending confirmation: ${totals.pending}.`)
+                    } catch (cause) {
+                      setError(messageOf(cause))
+                    } finally {
+                      setBusy(false)
+                    }
+                  }}>Resume batch emails</button>}
+                  {canIssue && <button className="button button-quiet" disabled={busy} onClick={() => {
+                    if (batchDetailId === batch.id) {
+                      setBatchDetailId('')
+                      setBatchOutcomes([])
+                    } else {
+                      void loadBatchOutcomes(batch.id, 0).catch((cause: unknown) => setError(messageOf(cause)))
+                    }
+                  }}>{batchDetailId === batch.id ? 'Hide rows' : 'View rows'}</button>}
+                </div>
+              </div>
+              {batchDetailId === batch.id && (
+                <div className="batch-outcomes" aria-label="Issuance row outcomes">
+                  <ul className="admin-list">
+                    {batchOutcomes.map((row) => (
+                      <li key={row.rowNumber}>
+                        <span>Row {row.rowNumber} · {row.status.replaceAll('_', ' ')}</span>
+                        <small>{row.serialNumber ?? row.errorCode ?? 'No credential reference'}</small>
+                      </li>
+                    ))}
+                    {!batchOutcomes.length && <li><span>No staged rows on this page.</span></li>}
+                  </ul>
+                  <div className="credential-actions">
+                    <button className="button button-quiet" disabled={busy || batchDetailPage === 0} onClick={() => void loadBatchOutcomes(batch.id, batchDetailPage - 1).catch((cause: unknown) => setError(messageOf(cause)))}>Previous rows</button>
+                    <button className="button button-quiet" disabled={busy || batchOutcomes.length < 50} onClick={() => void loadBatchOutcomes(batch.id, batchDetailPage + 1).catch((cause: unknown) => setError(messageOf(cause)))}>Next rows</button>
+                  </div>
+                </div>
+              )}
+            </div>
           )) : <p className="admin-empty">No issuance batches yet.</p>}
         </section>
 
@@ -789,6 +1047,7 @@ export default function Admin({ session, onSignOut }: { session: Session; onSign
               <div className="credential-actions">
                 {credential.status === 'issued' && <Link className="button button-secondary" to={`/c/${credential.id}`} target="_blank">Open share page</Link>}
                 {credential.status === 'issued' && canIssue && <button className="button button-secondary" disabled={busy} onClick={() => void downloadPdf(credential)}>Download PDF</button>}
+                {credential.status === 'issued' && canIssue && <button className="button button-quiet" disabled={busy} onClick={() => void resendCredentialEmail(credential.id, pendingEmailIds[credential.id] === true)}>{pendingEmailIds[credential.id] ? 'Start new email attempt' : 'Resend email'}</button>}
                 {credential.status === 'issued' && canRevoke && <select className="member-role-select" aria-label={`Visibility for ${credential.serial_number}`} value={credential.visibility} disabled={busy} onChange={(event) => void updateVisibility(credential.id, event.target.value as Credential['visibility'])}><option value="unlisted">Unlisted</option><option value="public">Public</option></select>}
                 {canRevoke && credential.status === 'issued' && (revokeId === credential.id ? (
                   <div className="revoke-inline"><input aria-label="Revocation reason" value={revokeReason} onChange={(event) => setRevokeReason(event.target.value)} placeholder="Reason required" maxLength={1000} /><button className="button button-danger" disabled={busy || !revokeReason.trim()} onClick={() => void revokeCredential(credential.id)}>Confirm revoke</button><button className="button button-quiet" onClick={() => { setRevokeId(''); setRevokeReason('') }}>Cancel</button></div>

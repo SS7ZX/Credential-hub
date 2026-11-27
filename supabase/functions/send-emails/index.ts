@@ -12,6 +12,7 @@ import { submitResendEmail } from "../_shared/resend-provider.ts";
 const credentialRequestSchema = z.object({
   organizationId: z.string().uuid(),
   credentialIds: z.array(z.string().uuid()).min(1).max(50),
+  requestKey: z.string().uuid(),
 }).strict();
 const invitationRequestSchema = z.object({
   action: z.literal("invite-member"),
@@ -201,7 +202,11 @@ Deno.serve(async (request) => {
       return jsonResponse(await sendInvitationEmail(admin, configuration, input, membership.userId));
     }
 
-    const results: Array<{ credentialId: string; status: "sent" | "failed" | "throttled"; detail?: string }> = [];
+    const results: Array<{
+      credentialId: string;
+      status: "sent" | "failed" | "throttled" | "pending";
+      detail?: string;
+    }> = [];
     for (const credentialId of new Set(input.credentialIds)) {
       const { data: credentialData, error: credentialError } = await admin
         .from("credentials")
@@ -219,15 +224,22 @@ Deno.serve(async (request) => {
         continue;
       }
 
-      const { data: reservationId, error: limitError } = await admin.rpc("reserve_email_send", {
+      const { data: reservationData, error: limitError } = await admin.rpc("reserve_idempotent_credential_email", {
         p_organization_id: input.organizationId,
         p_credential_id: credential.id,
         p_daily_limit: dailyLimit,
+        p_request_key: input.requestKey,
       });
       if (limitError) {
         throw new Error("Could not enforce the daily email limit");
       }
-      if (reservationId === null) {
+      const reservation = z.object({
+        throttled: z.boolean().optional(),
+        attemptId: z.string().uuid().optional(),
+        created: z.boolean().optional(),
+        status: z.enum(["reserved", "sent", "failed"]).optional(),
+      }).parse(reservationData);
+      if (reservation.throttled) {
         const { error: logError } = await admin.from("email_events").insert({
           organization_id: input.organizationId,
           credential_id: credential.id,
@@ -238,9 +250,22 @@ Deno.serve(async (request) => {
         results.push({ credentialId, status: "throttled", detail: "The organization daily sending limit has been reached" });
         continue;
       }
-      if (typeof reservationId !== "string") {
+      if (!reservation.attemptId || !reservation.status || typeof reservation.created !== "boolean") {
         throw new Error("The daily email limit returned an invalid reservation");
       }
+      if (!reservation.created) {
+        results.push({
+          credentialId,
+          status: reservation.status === "sent"
+            ? "sent"
+            : reservation.status === "failed" ? "failed" : "pending",
+          ...(reservation.status === "failed"
+            ? { detail: "This request was already attempted. Use Resend to start a new attempt." }
+            : {}),
+        });
+        continue;
+      }
+      const reservationId = reservation.attemptId;
 
       const accessToken = createOpaqueToken();
       const { data: accessData, error: accessError } = await admin.rpc(
@@ -311,6 +336,7 @@ Deno.serve(async (request) => {
       sent: results.filter((result) => result.status === "sent").length,
       failed: results.filter((result) => result.status === "failed").length,
       throttled: results.filter((result) => result.status === "throttled").length,
+      pending: results.filter((result) => result.status === "pending").length,
       results,
     });
   } catch (error) {
