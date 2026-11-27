@@ -756,11 +756,12 @@ export default function Admin({ session, onSignOut }: { session: Session; onSign
 
         {canIssue && organization && (
           <section className="admin-card stamping-panel">
-            <span className="eyebrow">EXISTING CERTIFICATES</span><h2>Stamp QR codes on Drive PDFs</h2>
-            <p>Open the stamping workspace only when you need to import, review, and stamp an event's certificates.</p>
+            <span className="eyebrow">{copyId.stampingWorkspace.eyebrow}</span>
+            <h2>{copyId.stampingWorkspace.title}</h2>
+            <p>{copyId.stampingWorkspace.description}</p>
             {!driveStampingOpen && (
               <button className="button button-secondary" onClick={() => setDriveStampingOpen(true)}>
-                Open Drive stamping
+                {copyId.stampingWorkspace.open}
               </button>
             )}
             {driveStampingOpen && (

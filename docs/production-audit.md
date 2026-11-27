@@ -1,4 +1,4 @@
-# Production readiness audit — H1
+# Production readiness audit — H1–H5 evidence and blockers
 
 **Scope:** local repository, local Supabase stack, and a production-mode frontend build made in an isolated temporary copy. No hosted database, deployment, or `.env` file was accessed. The supplied public origin was passed as a process environment value to the predeploy check.
 
@@ -783,10 +783,11 @@ Lighthouse 13.6.0 ran against the isolated production build. These are local, si
 | `/manage` | 90 | 100 | 100 | 91 | 765 ms | 765 ms | 424 ms | 0.001 |
 
 The credential route's request was intentionally unable to reach a backend because the test host is `.invalid`; its 5,014 ms LCP and category scores are not representative of a working credential page. `/manage` was an invalid-link shell, not a recipient-management session. Do not treat these as production performance claims.
+These Lighthouse numbers predate the final route-splitting build and are retained as historical measurements only; no post-split Lighthouse run completed in this phase.
 
-Final isolated build output: 288 modules; main JS 1,509.78 kB (gzip 498.20 kB), PDF worker 1,271.91 kB, QR worker 43.95 kB, CSS 37.38 kB (gzip 9.14 kB). The client-bundle scan passed for 12 built files, and Vite still reports the main chunk over its 500 kB warning threshold.
+The original H4 build measurement below is historical; route splitting was subsequently implemented. The current build and bundle results are recorded in the H4/H5 completion addendum.
 
-The earlier H2 record measured the main JS at 1,218.45 kB (gzip 422.28 kB): the current output is 291.33 kB larger raw and 75.92 kB larger gzip. The audit-tool additions are devDependencies, and the lockfile comparison found no changed existing runtime package versions; the exact source-level reason for the bundle increase remains **UNVERIFIED**. No code-splitting change was made. Proposed follow-up remains lazy-loading the Admin/share routes and loading camera, QR, and PDF/stamping code only when those workflows are opened; verify the new chunks and rerun Lighthouse before accepting that change.
+The earlier H2 comparison and original bundle-size increase are historical. Route splitting is now implemented and measured below; the large PDF worker and stamping chunk remain deferred rather than part of the initial route load.
 
 ### H4 raw local outputs
 
@@ -836,8 +837,75 @@ Client bundle check passed (12 built files).
 ### H4 blockers
 
 1. Provide a deterministic local authenticated fixture/backend, then run axe and 360 px checks on the actual issuance wizard and stamping review, plus authenticated `/manage` and invitation success/error states.
-2. Resolve and explain the 291.33 kB raw / 75.92 kB gzip main-bundle increase relative to H2; the main chunk remains above the warning threshold. Route-level splitting is proposed, not implemented.
+2. The large PDF worker and Drive stamping chunk still exceed Vite's 500 kB advisory threshold; they are lazy-loaded, but should be reduced or accepted against measured device performance before launch.
 3. Repeat Lighthouse on a local/staging deployment with representative credential and recipient data paths; synthetic backend-disabled measurements are not production evidence.
 4. Consolidate the remaining English interface copy if complete Indonesian localization is required; only the new error/network strings were centralized in this phase.
 
-H4 is complete only to the locally proven extent above. **Do not proceed to H5 without approval.**
+H4 is complete only to the locally proven extent above. H5 operational documents and launch gates are recorded below; this does not represent production approval.
+
+## H4/H5 completion addendum
+
+**Scope:** local frontend and documentation changes only. No remote database, deployment, push, or `.env` access was performed. The browser session for the prior synthetic preview timed out while navigating, so no additional authenticated UI state is claimed from that attempt.
+
+### H4 implementation and current bundle
+
+Admin and Drive stamping are lazy-loaded; the stamping workspace is imported only after an authorized user opens it. QR scanner and QR generation remain on demand. Current `npm run build` output:
+
+```text
+288 modules transformed.
+pdf.worker.min-CIqJB0yW.mjs                          1,271.91 kB
+index-BurkeuUD.css                                      36.53 kB │ gzip:   9.03 kB
+rolldown-runtime-pP25SEvz.js                              0.98 kB │ gzip:   0.56 kB
+qr-scanner.min-DXgKb0Y-.js                              15.75 kB │ gzip:   5.58 kB
+browser-BImNNX9d.js                                     23.48 kB │ gzip:   8.87 kB
+qr-scanner-worker.min-CJaXo3yu.js                       43.95 kB │ gzip:  10.37 kB
+Admin-DIx3WGco.js                                       49.37 kB │ gzip:  14.79 kB
+index-DkmL_v7R.js                                      430.81 kB │ gzip: 125.33 kB
+DriveStamping-BKDZ7q84.js                              995.98 kB │ gzip: 348.59 kB
+Client bundle check passed (16 built files).
+```
+
+The browser preview route timed out in the integrated browser; HTTP from the local PowerShell client returned 200 for `/admin`. The pre-existing axe results above remain the only browser accessibility evidence: zero violations across eight unauthenticated/shell states at 360 px. Authenticated issuance, stamping review, and recipient-link flows remain **UNVERIFIED**. Indonesian navigation, error, network, and stamping-workspace copy is centralized in `src/copy/id.ts`; most product interface labels are still English.
+
+Current targeted validation raw output:
+
+```text
+npm test
+Test Files  9 passed (9)
+Tests       41 passed (41)
+
+npm run lint
+> eslint .
+
+npm run typecheck
+> tsc -b
+
+deno task test:functions
+ok | 55 passed | 0 failed (16s)
+
+deno task check:functions
+Checked all configured Edge Function entrypoints with no reported errors.
+
+npm run verify:client-bundle
+Client bundle check passed (16 built files).
+```
+
+### H5 operational and privacy deliverables
+
+- `docs/deploy.md` starts with a do-not-push-to-main warning and specifies the staging-first production rollout order.
+- `docs/runbook.md` covers separate staging key generation/offline backup, owner-account recovery, signing-key compromise, rollback, backup/restore, and Drive stamping operations. It is explicitly a staging runbook; it does not authorize production operations.
+- `docs/operations.md` defines uptime, Vercel, Supabase, email, Storage, anonymization, and error-aggregation signals; proposed thresholds are explicitly pending owner approval. Incident-contact entries are placeholders in a restricted system, not real contacts.
+- `docs/privacy-model.md` covers public projection, consent, anonymization, artifacts, and the retention decisions still required. No retention period is silently set.
+- `docs/privacy/terms-draft.md` and `docs/privacy/drive-stamping-terms-draft.md` are clearly marked **DRAFT — NEEDS LEGAL REVIEW**; neither is an approved notice or legal advice.
+- `docs/launch-checklist.md` provides owner/second-reviewer sign-offs and production go/no-go gates.
+
+### Remaining blockers — H4/H5 and release-wide
+
+1. **Local database verification:** the local Supabase reset/pgTAP run previously failed because Docker Desktop's Linux engine was unavailable. Start Docker Desktop, confirm its Linux engine is ready, then run `npx supabase db reset` followed by `npx supabase test db` using only the local stack. Do not use remote flags. This also leaves migrations and database-backed H4 states unverified.
+2. **Authenticated H4 coverage:** run axe and 360 px checks with deterministic synthetic authenticated fixtures for the issuance wizard, stamping review, invitation success/error, and authenticated `/manage`; verify loading, empty, error, offline, 429, and 503 states. The current integrated browser navigation timed out, so do not treat it as passing evidence.
+3. **Bundle/device performance:** initial application JS is 430.81 kB (125.33 kB gzip), but the lazily loaded stamping chunk is 995.98 kB (348.59 kB gzip) and the PDF worker is 1,271.91 kB. Repeat Lighthouse with working synthetic data paths and test on target mobile devices before accepting these costs.
+4. **Owner retention decision:** approve a retention period and deletion procedure for stamped Storage PDFs, ZIP/report copies, verification events, audit/consent records, batch metadata, credential/revocation evidence, backups, and provider email events. Implement scheduled purge if required by that decision.
+5. **Staging/operator checks:** configure and test error aggregation with PII scrubbing; fill and verify incident contacts in the restricted system; rehearse restore; verify Drive 10-file pilot, printed-phone QR, mail sandbox, DNS, production URL, and issuer-key custody in staging. These remain **UNVERIFIED** until an authorized owner/operator completes them.
+6. **Legal and product copy:** obtain counsel approval for the privacy/terms draft. If complete Indonesian localization is a release requirement, migrate the remaining English UI copy into the localization module and test all routes.
+
+**Current release decision: NO-GO.** Local frontend and Deno validation passed, but database-backed checks and the staging/owner gates above are not proven. Do not deploy, push, or describe the service as production-ready on this evidence alone.

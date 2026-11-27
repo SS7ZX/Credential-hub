@@ -63,6 +63,12 @@ export const copyId = {
     online: 'Koneksi internet pulih.',
     emptyStampRuns: 'Belum ada run stamping. Pilih folder Drive dan CSV untuk memulai.',
   },
+  stampingWorkspace: {
+    eyebrow: 'SERTIFIKAT TERBIT',
+    title: 'Tambahkan QR pada PDF Drive',
+    description: 'Buka ruang kerja untuk mengimpor, meninjau, dan memberi QR pada sertifikat kegiatan.',
+    open: 'Buka stamping Drive',
+  },
   status: {
     valid: 'Valid',
     revoked: 'Dicabut',

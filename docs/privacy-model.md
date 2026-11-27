@@ -1,5 +1,9 @@
 # Privacy model
 
+**Technical draft — NEEDS LEGAL REVIEW before being used as a privacy notice or public promise.**
+This document describes current implementation behavior; it is not legal advice and does not
+replace a jurisdiction-specific privacy notice or approved retention schedule.
+
 ## Signed credentials and public projection
 
 Signed VC-JWT payloads never contain the recipient's name. They carry only the salted hash identity and achievement data. The public JSON endpoint constructs a separate projection from the signed credential and private recipient data. It includes no recipient name by default; a name is included only when the recipient has active consent for that credential.

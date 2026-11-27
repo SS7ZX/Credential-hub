@@ -41,8 +41,9 @@ contact information out of this file.
       ZIP/report copies, verification events, redacted audit/consent records, batch metadata,
       credential/revocation evidence, backups, and provider-side email events. **No periods are
       preselected by this checklist.**
-- [ ] Privacy notice/terms draft reviewed by qualified counsel; current stamping terms remain
-      **NEEDS LEGAL REVIEW** until signed off.
+- [ ] Privacy notice, [service terms draft](./privacy/terms-draft.md), and
+      [stamping terms draft](./privacy/drive-stamping-terms-draft.md) reviewed by qualified counsel;
+      both drafts remain **NEEDS LEGAL REVIEW** until signed off.
 - [ ] Owner recovery, signing-key compromise, rollback, backup, and restore procedures rehearsed
       using staging/synthetic data.
 - [ ] Current database and separate Storage backup/recovery point verified by the authorized
