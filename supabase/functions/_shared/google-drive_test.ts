@@ -85,6 +85,47 @@ Deno.test("Drive listing constructs a fixed-host request and rejects an attacker
   }
 });
 
+Deno.test("Drive distinguishes forbidden access from quota-related 403 and 429 responses", async () => {
+  const cases = [
+    {
+      response: new Response(JSON.stringify({ error: { errors: [{ reason: "insufficientFilePermissions" }] } }), { status: 403 }),
+      code: "drive_forbidden",
+      status: 403,
+      retryAfterSeconds: 5,
+    },
+    {
+      response: new Response(JSON.stringify({ error: { errors: [{ reason: "userRateLimitExceeded" }] } }), { status: 403 }),
+      code: "drive_rate_limited",
+      status: 429,
+      retryAfterSeconds: 5,
+    },
+    {
+      response: new Response("{}", { status: 429, headers: { "Retry-After": "9" } }),
+      code: "drive_rate_limited",
+      status: 429,
+      retryAfterSeconds: 9,
+    },
+  ] as const;
+
+  for (const testCase of cases) {
+    try {
+      await listDriveFolder("folder_abcdef1234", "unit-test-token", async () => testCase.response.clone());
+    } catch (error) {
+      if (
+        error instanceof Error
+        && "code" in error
+        && error.code === testCase.code
+        && "status" in error
+        && error.status === testCase.status
+        && "retryAfterSeconds" in error
+        && error.retryAfterSeconds === testCase.retryAfterSeconds
+      ) continue;
+      throw error;
+    }
+    throw new Error(`Drive ${testCase.status} response was not rejected`);
+  }
+});
+
 Deno.test("file access remains within the selected folder and its first-level subfolders", async () => {
   const records = new Map([
     ["root_abcdef1234", {

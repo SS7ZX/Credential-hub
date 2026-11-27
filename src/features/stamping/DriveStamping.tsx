@@ -4,6 +4,8 @@ import { GlobalWorkerOptions, getDocument, type PDFPageProxy, type PDFDocumentLo
 import pdfWorkerUrl from 'pdfjs-dist/build/pdf.worker.min.mjs?url'
 import { getPublicSiteUrl } from '../../config/brand'
 import { supabase } from '../../lib/supabase'
+import { requestErrorMessage } from '../../lib/request-error'
+import { copyId } from '../../copy/id'
 import {
   QR_LABEL_GAP_POINTS,
   QR_SIZE_DEFAULT_POINTS,
@@ -98,7 +100,7 @@ export default function DriveStamping({ organizationId, events, achievements }: 
     }).then((dataUrl) => {
       if (active) setQrDataUrl(dataUrl)
     }).catch((cause: unknown) => {
-      if (active) setError(cause instanceof Error ? cause.message : 'Could not create the sample QR code.')
+      if (active) setError(requestErrorMessage(cause, copyId.errors.requestFailed))
     })
     return () => { active = false }
   }, [verifyUrl])
@@ -130,7 +132,7 @@ export default function DriveStamping({ organizationId, events, achievements }: 
         }
     })()
       .catch((cause: unknown) => {
-        if (active) setError(cause instanceof Error ? cause.message : 'Could not load this achievement layout.')
+        if (active) setError(requestErrorMessage(cause, copyId.errors.requestFailed))
       })
       .finally(() => {
         if (active) setLoadingLayout(false)
@@ -163,7 +165,7 @@ export default function DriveStamping({ organizationId, events, achievements }: 
       viewportRef.current = viewport
       setPreview({ width: viewport.width, height: viewport.height, viewport })
     })().catch((cause: unknown) => {
-      if (active) setError(cause instanceof Error ? cause.message : 'Could not render the sample PDF.')
+      if (active) setError(requestErrorMessage(cause, copyId.errors.pdfInvalid))
     })
 
     return () => {
@@ -200,7 +202,7 @@ export default function DriveStamping({ organizationId, events, achievements }: 
       setSampleFile(null)
       setPages([])
       setPreview(null)
-      setError(cause instanceof Error ? cause.message : 'Could not inspect the selected PDF.')
+      setError(requestErrorMessage(cause, copyId.errors.pdfInvalid))
     }
   }
 
@@ -251,7 +253,7 @@ export default function DriveStamping({ organizationId, events, achievements }: 
       setLayoutExists(true)
       setMessage('QR layout saved for this achievement.')
     } catch (cause) {
-      setError(cause instanceof Error ? cause.message : 'Could not save this QR layout.')
+      setError(requestErrorMessage(cause, copyId.errors.requestFailed))
     } finally {
       setSaving(false)
     }
@@ -308,9 +310,15 @@ export default function DriveStamping({ organizationId, events, achievements }: 
           {hasRotatedPage && <p className="admin-error" role="alert">Rotated PDFs are rejected. Select an unrotated source file.</p>}
           {currentPage && (
             <div className="stamping-preview-area">
-              <p className="stamping-note">Click the certificate where the QR should be centered. Coordinates are measured from the PDF page’s lower-left corner.</p>
+              <p className="stamping-note" id="stamping-preview-instructions">Click the certificate where the QR should be centered. Keyboard users can set the same position with the X and Y fields below. Coordinates are measured from the PDF page’s lower-left corner.</p>
               <div className="stamping-canvas-wrap" style={{ aspectRatio: `${currentPage.width} / ${currentPage.height}` }}>
-                <canvas ref={canvasRef} onClick={placeQr} aria-label="PDF page preview; click to place the QR code" />
+                <canvas
+                  ref={canvasRef}
+                  onClick={placeQr}
+                  role="img"
+                  aria-label="PDF page preview. Click to place the QR code, or edit the X and Y fields below."
+                  aria-describedby="stamping-preview-instructions"
+                />
                 {preview && boxPosition && qrDataUrl && (
                   <img
                     className="stamping-qr-overlay"

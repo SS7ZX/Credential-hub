@@ -1,6 +1,8 @@
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import JSZip from 'jszip'
 import { supabase } from '../../lib/supabase'
+import { requestErrorMessage } from '../../lib/request-error'
+import { copyId } from '../../copy/id'
 import { inspectPdfTemplate, PdfTemplateError } from './pdf-template'
 import {
   matchStampFiles,
@@ -122,13 +124,18 @@ export default function StampWorkflow({ organizationId, events, achievements }: 
 
   const loadRunHistory = useCallback(async (): Promise<void> => {
     if (!supabase) throw new Error('Supabase is not configured.')
-    const { data, error: queryError } = await supabase.from('stamp_runs')
-      .select('id, achievement_id, drive_folder_id, status, expected_file_count, processed_count, succeeded_count, failed_count, review_sample_file_ids, created_at')
-      .eq('organization_id', organizationId)
-      .order('created_at', { ascending: false })
-      .limit(30)
-    if (queryError) throw queryError
-    setHistory((data ?? []) as RunRecord[])
+    setLoading(true)
+    try {
+      const { data, error: queryError } = await supabase.from('stamp_runs')
+        .select('id, achievement_id, drive_folder_id, status, expected_file_count, processed_count, succeeded_count, failed_count, review_sample_file_ids, created_at')
+        .eq('organization_id', organizationId)
+        .order('created_at', { ascending: false })
+        .limit(30)
+      if (queryError) throw queryError
+      setHistory((data ?? []) as RunRecord[])
+    } finally {
+      setLoading(false)
+    }
   }, [organizationId])
 
   useEffect(() => {
@@ -172,7 +179,7 @@ export default function StampWorkflow({ organizationId, events, achievements }: 
             ...current,
             [pair.stampFileId]: {
               loading: false,
-              error: cause instanceof Error ? cause.message : 'PDF preview is unavailable.',
+              error: requestErrorMessage(cause, copyId.errors.pdfInvalid),
             },
           }))
         }
@@ -652,13 +659,19 @@ export default function StampWorkflow({ organizationId, events, achievements }: 
               )}
               <details className="stamping-full-review" open={run.status === 'review_required'}>
                 <summary>Full file list ({run.pairs.length} of {run.expectedCount} mapped)</summary>
-                <div className="stamping-file-list">
+                <div className="stamping-file-list" role="table" aria-label="Full name, Drive file, credential serial, and processing status">
+                  <div className="stamping-file-row stamping-file-header" role="row">
+                    <span role="columnheader">Recipient</span>
+                    <span role="columnheader">Drive file</span>
+                    <span role="columnheader">Serial</span>
+                    <span role="columnheader">Status</span>
+                  </div>
                   {run.pairs.map((pair) => (
-                    <div className="stamping-file-row" key={pair.stampFileId}>
-                      <span>{pair.row.full_name}</span>
-                      <span>{pair.file.name}</span>
-                      <span>{pair.credential.serial_number}</span>
-                      <span className={`stamping-status stamping-status-${pair.status}`}>{pair.status}{pair.errorCode ? ` · ${pair.errorCode}` : ''}</span>
+                    <div className="stamping-file-row" role="row" key={pair.stampFileId}>
+                      <span role="cell">{pair.row.full_name}</span>
+                      <span role="cell">{pair.file.name}</span>
+                      <span role="cell">{pair.credential.serial_number}</span>
+                      <span role="cell" className={`stamping-status stamping-status-${pair.status}`}>{pair.status}{pair.errorCode ? ` · ${pair.errorCode}` : ''}</span>
                     </div>
                   ))}
                 </div>
@@ -725,6 +738,9 @@ export default function StampWorkflow({ organizationId, events, achievements }: 
           ))}
         </section>
       )}
+      {!history.length && !loading && (
+      <p className="admin-empty" role="status">{copyId.network.emptyStampRuns}</p>
+      )}
 
       {error && <p className="admin-error" role="alert">{error}</p>}
       {message && <p className="admin-success" role="status">{message}</p>}
@@ -736,7 +752,7 @@ export default function StampWorkflow({ organizationId, events, achievements }: 
 }
 
 function messageOf(error: unknown): string {
-  return error instanceof Error ? error.message : 'Stamping request failed. Please try again.'
+  return requestErrorMessage(error, copyId.errors.requestFailed)
 }
 
 function safeDownloadName(value: string): string {

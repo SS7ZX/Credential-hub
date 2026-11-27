@@ -1,5 +1,6 @@
 import { z } from "npm:zod@4";
 import { buildCredential, hashRecipientEmail } from "../_shared/credential.ts";
+import { issuanceRowSchema } from "../_shared/issuance-row.ts";
 import { getOrganizationDid, getPublicSiteUrl } from "../_shared/site-config.ts";
 import {
   handleOptions,
@@ -9,16 +10,6 @@ import {
 } from "../_shared/http.ts";
 import { EnvKeySigner } from "../_shared/signer.ts";
 import { getAdminClient, requireOrganizationRole } from "../_shared/supabase.ts";
-
-const rowSchema = z.object({
-  full_name: z.string().trim().min(1).max(200)
-    .transform((value) => value.replace(/\s+/g, " ")),
-  email: z.string().trim().email().max(320)
-    .transform((value) => value.toLowerCase()),
-  category: z.string().trim().max(100).optional(),
-  issued_on: z.string().trim().optional(),
-  expires_on: z.string().trim().optional(),
-}).strict();
 
 const createSchema = z.object({
   action: z.literal("create"),
@@ -191,7 +182,7 @@ async function processRows(request: Request, batchId: string, rows: RawRow[]) {
     const payload = entry.payload;
     const idempotencyKey = await sha256(`${batchId}:${entry.rowNumber}:${stableJson(payload)}`);
     try {
-      const input = rowSchema.parse(payload);
+      const input = issuanceRowSchema.parse(payload);
       const emailSalt = randomSalt();
       const emailHash = await hashRecipientEmail(input.email, emailSalt);
       const credentialId = crypto.randomUUID();

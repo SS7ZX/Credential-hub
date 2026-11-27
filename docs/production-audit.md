@@ -177,7 +177,7 @@ No hosted data was inspected. The owner must approve those retention choices, th
 2. Verify the signed URL guard and Storage deletion behavior against staging, including any URLs created before anonymization.
 3. Verify Vercel headers/CSP, per-function CORS, gateway `verify_jwt`, rate-limit 429s, and hosted RLS against staging.
 4. Approve the listed retention/deletion decisions and operational procedures.
-5. Complete live Drive, phone scan, and 10-file pilot checks; H2 smoke/load evidence remains outstanding.
+5. Complete live Drive, phone scan, and 10-file pilot checks; H2 local evidence is below, with the live local endpoint smoke and Storage quota still unverified.
 
 No deployment or push is authorized by this audit.
 
@@ -434,7 +434,7 @@ The following captures the finding and totals used in this audit; it is not a by
 }
 ```
 
-`npm audit` exits 1 due to the moderate finding. No H2 smoke-test output exists yet; it is deferred until that phase is approved.
+`npm audit` exits 1 due to the moderate finding. H2 local-only smoke/load evidence is recorded below.
 
 ## Final H1 blocker-fix rerun
 
@@ -514,3 +514,330 @@ Tests       34 passed (34)
 === npm run verify:client-bundle (real isolated build) ===
 Client bundle check passed (11 built files).
 ```
+
+## H2 local smoke and load evidence
+
+No hosted URL, remote database, deployment, or dotenv file was used. `scripts/smoke-test.mjs` accepts a base URL and known test credential but rejects non-loopback hosts. It checks DID/JWKS and key agreement, verification of the known credential, crawler OG metadata, security headers, unknown-credential 404, and a verification-endpoint 429. It does not mutate business data; its rate-limit probe intentionally consumes local rate-limit counters.
+
+**Smoke runner test:** a local HTTP test harness exercises all seven checks, including successful credential verification, unknown-ID 404, 429, and refusal of a hosted target. This verifies the runner behavior, not the live app deployment.
+
+**Live local endpoint smoke: UNVERIFIED.** The local seed is intentionally empty (`supabase/seed.sql` contains no credential), so there is no known test credential UUID to pass to the read-only runner. The app's dynamic `/c/:id` crawler metadata is implemented in Vercel middleware, which the plain local Vite server does not execute. Do not substitute the production URL. To complete this check locally, create a synthetic credential and key in the local database, start the local Vercel-compatible runtime with explicit local Supabase process variables (not dotenv), then run:
+
+```text
+node scripts/smoke-test.mjs http://127.0.0.1:<local-vercel-port> --credential-id <local-synthetic-credential-uuid> --supabase-url http://127.0.0.1:54321 --anon-key <local-anon-or-publishable-key>
+```
+
+`RATE_LIMIT_HASH_SECRET` and a forwarding IP must also be configured in the local Functions runtime or the rate-limit probe will fail closed (HTTP 503 rather than 429). The runner's unit harness returns PASS; live local endpoint results remain unverified.
+
+### 300-credential issuance dry run
+
+`deno run scripts/h2-load-dry-run.ts` validates, signs with a newly generated ephemeral Ed25519 key, and discards 300 synthetic OB 3.0 VC-JWTs in memory. It performs no database or Storage writes.
+
+| Metric | Result |
+|---|---:|
+| Credentials | 300 |
+| Elapsed | 361.3 ms |
+| Throughput | 830.43 credentials/s |
+| Mean VC-JWT size | 1,473 bytes |
+
+This measures local credential construction/schema validation/signing only; it does not measure Postgres RPC latency, credential persistence, or concurrent users.
+
+### 300-file stamping dry run
+
+The same script creates a flattened A4-landscape synthetic certificate with a noisy 1400 × 990 RGB background, then stamps 300 distinct credential URLs serially. Source and output PDFs remain in process memory; no Storage objects are written. Storage estimate is the sum of the actual 300 output byte lengths, excluding object metadata, versioning, backups, and replication.
+
+| Metric | Result |
+|---|---:|
+| Source PDF | 1,210,938 bytes |
+| Stamped PDFs | 300 |
+| Stamping elapsed | 9,697.7 ms |
+| Throughput | 30.94 PDFs/s |
+| Mean stamped PDF | 1,215,397 bytes |
+| Estimated output total | 364,619,220 bytes (0.365 GB / 0.34 GiB) |
+| Peak process RSS | 277.08 MiB |
+| Peak JS heap | 88.73 MiB |
+| Final RSS / heap | 267.03 / 88.73 MiB |
+
+The runtime retained most of its peak RSS at completion; the dry run is serial and does not model the browser's configured concurrency, Edge Function memory limits, or actual Storage quota. Measure the Storage quota separately before the pilot.
+
+### Bundle sizes and route-splitting proposal
+
+Fresh production build in an isolated copy with dotenv files excluded; raw emitted asset sizes:
+
+| Chunk / asset | Bytes | Approx. size |
+|---|---:|---:|
+| `pdf.worker.min-CIqJB0yW.mjs` | 1,271,915 | 1,242.1 KiB |
+| `index-ivW5u9Ys.js` | 1,218,450 | 1,189.9 KiB (gzip 422.28 kB) |
+| `source-serif-4-latin-wght-normal-DMe4EKeb.woff2` | 50,936 | 49.7 KiB |
+| `ibm-plex-sans-latin-wght-normal-IvpUvPa2.woff2` | 45,712 | 44.6 KiB |
+| `qr-scanner-worker.min-CJaXo3yu.js` | 43,951 | 42.9 KiB |
+| `source-serif-4-latin-ext-wght-normal-BVZ5su8S.woff2` | 42,212 | 41.2 KiB |
+| `index-HC-0VRWf.css` | 33,964 | 33.2 KiB |
+| `ibm-plex-sans-latin-ext-wght-normal-CIII54If.woff2` | 30,964 | 30.2 KiB |
+
+The production build reports a chunk-size warning above 500 kB. No splitting changes were made in H2. Proposed follow-up: lazy-load `Admin` at the `/admin` route; move the share credential page into its own lazy route; dynamically import `qr-scanner` only when the camera control is opened and `qrcode` only for pages that render QR images; load PDF preview/stamping code only inside the stamping workflow. Keep the 1.27 MB PDF worker as a separately fetched worker asset and verify the resulting route chunks with the real-build scan and Lighthouse before approval.
+
+### H2 failure modes and evidence
+
+- **Observed build warning:** the main JavaScript chunk is 1.218 MB minified, with a 422.28 kB gzip size; the PDF worker is a separate 1.272 MB asset. Route-level splitting is proposed above, not implemented.
+- **Observed memory consideration:** the 300 sequential stamps peaked at 277.08 MiB RSS, with 267.03 MiB RSS still resident at completion.
+- **Storage capacity is not verified:** the measured output estimate is approximately 0.365 GB for 300 synthetic files; actual quota, Storage metadata, and backup overhead were not queried.
+- **Smoke implementation verified only by local HTTP harness:** it covers the expected HTTP 404 and 429 behavior; no seeded test credential or Vercel-compatible local runtime was available to prove those responses against live local app services.
+- **Rate-limit configuration failure behavior:** the shared limiter rejects missing IP/`RATE_LIMIT_HASH_SECRET` configuration; the smoke runner will show that as an unexpected service response rather than falsely reporting a 429.
+
+### H2 raw output
+
+```text
+node --test scripts\tests\smoke-test.node.mjs
+✔ smoke runner checks discovery, verification, OG, security, 404, and 429 locally (169.667ms)
+✔ smoke runner refuses hosted targets (4.7737ms)
+ℹ tests 2
+ℹ suites 0
+ℹ pass 2
+ℹ fail 0
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 615.0952
+```
+
+```json
+{
+  "result": "PASS",
+  "mode": "in-memory dry run; no database or Storage writes",
+  "credentialCount": 300,
+  "issuance": {
+    "elapsedMs": 361.3,
+    "credentialsPerSecond": 830.43,
+    "averageVcJwtBytes": 1473
+  },
+  "stamping": {
+    "elapsedMs": 9697.7,
+    "filesPerSecond": 30.94,
+    "sourcePdfBytes": 1210938,
+    "sourceRaster": "1400x990 RGB synthetic certificate artwork",
+    "averageStampedPdfBytes": 1215397,
+    "totalStampedBytesFor300": 364619220,
+    "storageEstimateDecimalGB": 0.365,
+    "storageEstimateGiB": 0.34
+  },
+  "memory": {
+    "initialRssMiB": 104.28,
+    "peakRssMiB": 277.08,
+    "peakHeapUsedMiB": 88.73,
+    "finalRssMiB": 267.03,
+    "finalHeapUsedMiB": 88.73
+  },
+  "totalElapsedMs": 10999.1
+}
+```
+
+```text
+=== production build (dotenv-excluded isolated copy) ===
+✓ 286 modules transformed.
+dist/assets/pdf.worker.min-CIqJB0yW.mjs                          1,271.91 kB
+dist/assets/index-HC-0VRWf.css                                      33.96 kB │ gzip:   8.55 kB
+dist/assets/qr-scanner-worker.min-CJaXo3yu.js                       43.95 kB │ gzip:  10.37 kB
+dist/assets/index-ivW5u9Ys.js                                    1,218.45 kB │ gzip: 422.28 kB
+(!) Some chunks are larger than 500 kB after minification.
+✓ built in 723ms
+=== npm run lint ===
+> eslint .
+=== npm test ===
+Test Files  7 passed (7)
+Tests       34 passed (34)
+=== npm run verify:client-bundle ===
+Client bundle check passed (11 built files).
+```
+
+H2 is complete to the extent proven locally. Do not proceed to H3 until review; live endpoint smoke and Storage quota remain explicitly unverified.
+
+## H3 failure modes
+
+**Scope:** local source, mocked provider calls, local Deno/Vitest tests, and local pgTAP only. No live Resend, Drive, hosted database, deployment, or `.env` values were used. This phase did not start H4.
+
+### Results and remaining uncertainty
+
+| Failure mode | Evidence and observed behavior | Status |
+|---|---|---|
+| Resend network outage / HTTP rejection | `submitResendEmail` converts transport errors and non-2xx responses into failed attempts; the stored reservation id is sent as Resend's idempotency key. Deno tests cover a thrown transport error and HTTP 503. A 2xx records provider acceptance and a provider message ID, not delivery. | **PROVEN locally** for network/HTTP handling. |
+| Resend bounce / complaint | There is no Resend webhook handler or bounce/complaint state transition in the app. A provider-accepted message can still bounce or receive a complaint after this request completes. | **UNVERIFIED** delivery/bounce/complaint tracking; live provider behavior was not tested. |
+| Drive 403 / 429 | Mocked Deno tests distinguish ordinary permission 403, quota-related 403, and 429 with `Retry-After`. Frontend retry tests prove at most three calls, exponential delays, honoring the larger provider retry hint, and propagation after exhaustion. | **PROVEN locally** with mocks; live Drive quota behavior remains unverified. |
+| Storage failure during stamping | `stamp-one-file` marks upload failure as `storage_upload_failed`, releases the processing lease through the failure RPC, and returns 503. pgTAP simulates this persisted failure, reclaims the same file with the same source hash, and records another failure. This tests the database state transition, not an injected failure from a running Storage service. | **PROVEN locally** for state/retry logic; **UNVERIFIED** as a full Storage fault-injection integration. |
+| Browser closes during a batch | Run and file state is stored in the database. The batch detail/run history offers **Open / resume** and **Resume pending or failed files**; reloading the run re-reads stored statuses before processing. | **Documented behavior; UNVERIFIED** by an automated browser-close/resume test. |
+| Duplicate issuance submit | The pgTAP case submits the same successful row key twice and asserts `replayed`, one issuance row, and an unchanged processed count. The stamping pgTAP suite also tests idempotent run creation and Drive-file registration. | **PROVEN locally**. |
+| Used / expired recipient access link | pgTAP asserts a redeemed token cannot be redeemed again and an expired token is rejected. The handler returns 400 for invalid/expired/reused access links; an expired management session returns 401. | **PROVEN locally** by pgTAP and handler behavior; hosted Auth timing is not exercised. |
+| Revoked credential verification | `verifyCredentialJwt` returns failed `revocation` and `registered` checks when a revocation row exists or the credential status is revoked. | **Source behavior proven; UNVERIFIED** as a database-backed verification endpoint test. |
+| Expired credential verification | Verification's `validUntil` check fails for an expired database status or a `validUntil` earlier than the current time. | **Source behavior proven; UNVERIFIED** as a database-backed verification endpoint test. |
+| Unknown `kid` | A missing issuer-key lookup is rejected as `Unknown signing key`; the unit test covers that rejection path. | **PROVEN locally** for the missing-key guard; **UNVERIFIED** against a live database lookup. |
+| Tampered VC-JWT | A locally generated EdDSA VC-JWT verifies before tampering and rejects a modified signature with `Credential signature is invalid`. | **PROVEN locally** cryptographically; no hosted verification request was made. |
+| Download while anonymization is pending/done | Deno tests assert no signed URL is issued unless the database returns an eligible path. pgTAP covers pending/anonymized recipient visibility and the download-path guard. | **PROVEN locally**; hosted Storage URL invalidation/TTL remains unverified as noted in H1. |
+| UI handling of 429 / 503 | The shared request-message mapper shows retry guidance for either a `Response` context with 429 or an error status of 503. It is wired to verification, credential detail, Admin, and stamping errors. Vitest covers both status paths. | **PROVEN locally** for mapping; no deployed UI/gateway was exercised. |
+
+### Stamping request and memory bounds
+
+**PROVEN from the local request contract/source:** `stamp-one-file` accepts one `stampFileId`, loads and processes that one file, and returns one file result; it has no loop over a run or PDF collection. The browser orchestrates separate invocations with concurrency 2. Each source PDF is capped at 15 MiB. The page limit defaults to 50 and may be configured up to 100 pages.
+
+**UNVERIFIED numeric memory bound:** neither the repository nor the local function configuration sets a per-invocation memory ceiling, and no per-invocation peak-memory measurement was captured. A 15 MiB source cap is not a memory bound: PDF parsing and output buffers can expand beyond source size. Do not infer the browser's two-request concurrency as an Edge Function memory guarantee.
+
+### Raw local verification output
+
+```text
+deno task test:functions
+Check supabase/functions/_shared/google-drive_test.ts
+Check supabase/functions/_shared/resend-provider_test.ts
+Check supabase/functions/_shared/verify_test.ts
+Drive distinguishes forbidden access from quota-related 403 and 429 responses ... ok
+Resend transport outage is recorded as a failed submission ... ok
+Resend HTTP rejection is failed and preserves the reservation idempotency key ... ok
+Resend acceptance records provider message id but is not a delivery receipt ... ok
+missing key lookup rejects an unknown VC-JWT kid ... ok
+verifyCredentialProof accepts valid signatures and rejects tampered VC-JWTs ... ok
+ok | 53 passed | 0 failed (8s)
+```
+
+```text
+deno task check:functions
+Check supabase/functions/send-emails/index.ts
+Check supabase/functions/stamp-one-file/index.ts
+Check supabase/functions/finalize-run/index.ts
+Exit code: 0
+```
+
+```text
+npm test
+Test Files  9 passed (9)
+Tests       39 passed (39)
+Duration    3.59s
+```
+
+```text
+npm run lint
+> eslint .
+
+npm run typecheck
+> tsc -b
+Exit code: 0
+```
+
+```text
+npm exec vitest -- run src/features/stamping/service.test.ts src/lib/request-error.test.ts
+Test Files  2 passed (2)
+Tests       5 passed (5)
+Duration    920ms
+```
+
+```text
+npm exec supabase -- test db --local
+Target: local stack (127.0.0.1:54322)
+credential_hub_rls.sql .... ok
+drive_stamping_rls.sql .... ok
+stamped_download_rls.sql .. ok
+All tests successful.
+Files=3, Tests=276
+Result: PASS
+```
+
+H3 is complete to the locally verifiable extent above. **Blockers / UNVERIFIED:** Resend bounce/complaint lifecycle; live Drive behavior; an injected real Storage outage and end-to-end resume; browser-close/resume automation; database-backed expired/revoked credential endpoint tests; hosted 429/503 rendering; and a measured/configured Edge Function memory ceiling. Stop here before H4.
+
+## H4 UI and accessibility
+
+**Scope:** local frontend source, an isolated production build, and browser checks against `127.0.0.1`. The isolated copy excluded dotenv files and used `https://h4-project.invalid` with a test-only publishable key; Chrome's host resolver was configured to block non-local hosts during Lighthouse. No remote database, deployment, or live credential was accessed.
+
+### Route, accessibility, and responsive checks
+
+axe-core 4.14.1 was run for WCAG 2.0/2.1 A/AA at a 360 × 800 viewport. After fixing the detected contrast failures, all audited states had zero violations and no horizontal overflow:
+
+| Route/state | axe violations | Document width |
+|---|---:|---:|
+| `/` | 0 | 348 px |
+| `/verify/<synthetic-id>` | 0 | 345 px |
+| `/c/<synthetic-id>` loading state | 0 | 360 px |
+| `/manage` without a valid recipient link | 0 | 360 px |
+| `/invite` without an invitation token | 0 | 360 px |
+| `/admin` sign-in | 0 | 360 px |
+| `/admin` synthetic local session, dashboard loading/empty state | 0 | 345 px |
+| Not Found | 0 | 360 px |
+
+These are route-shell and synthetic states, not proof of every success/error state. The dashboard mock never completed its Supabase-backed organization request, so the authenticated issuance wizard and stamping mandatory-review screen could not be reached without a functioning backend. Their axe coverage and actual narrow-screen behavior are **UNVERIFIED**. `/manage` and `/invite` were checked only without valid tokens; live recipient/invitation flows are **UNVERIFIED**. The 360 px checks do not certify every device width.
+
+The browser confirmed the offline and restored-connection notices appear when the corresponding browser events are dispatched. This verifies the UI transition, not real offline write/retry behavior. New error/network copy is centralized in `src/copy/id.ts`; English interface copy elsewhere has not been fully migrated to a localization module.
+
+### UI changes and tests
+
+**PROVEN locally:** the active portal and Admin shells have skip links and named landmarks; the network notice is announced as status; the stamping preview has a keyboard/numeric positioning alternative; the match list is expressed as a semantic table; loading and empty states are exposed as status; and provider errors are mapped to safe localized guidance rather than rendering raw `Error.message`. Decorative gradients and star glyph decoration were removed in the touched UI; no emoji icon set or invented metric was added.
+
+The public share/loading, verification, invitation, management-link, Admin, and stamping catch paths use safe fallbacks. `src/lib/request-error.test.ts` verifies 429/503 retry guidance and that provider error text is not exposed. `src/features/stamping/service.test.ts` verifies bounded Drive 403/429 retries and backoff. The final Vitest suite passed 41 tests.
+
+The first axe run found contrast failures in the Admin dashboard labels/empty states and the credential loading state. Those colors were darkened in `src/App.css`; the final axe pass above includes the rebuilt versions. The wizard and stamping review still need a deterministic local mock backend or component-level browser harness before those states can be considered audited.
+
+### Lighthouse and bundle measurements
+
+Lighthouse 13.6.0 ran against the isolated production build. These are local, simulated Lighthouse measurements, not staging measurements:
+
+| Route | Performance | Accessibility | Best Practices | SEO | FCP | LCP | TBT | CLS |
+|---|---:|---:|---:|---:|---:|---:|---:|---:|
+| `/` | 80 | 100 | 100 | 91 | 775 ms | 775 ms | 823 ms | 0.042 |
+| `/verify/<synthetic-id>` | 87 | 100 | 100 | 91 | 764 ms | 764 ms | 494 ms | 0.000 |
+| `/c/<synthetic-id>` | 71 | 100 | 96 | 91 | 763 ms | 5,014 ms | 439 ms | 0.000 |
+| `/manage` | 90 | 100 | 100 | 91 | 765 ms | 765 ms | 424 ms | 0.001 |
+
+The credential route's request was intentionally unable to reach a backend because the test host is `.invalid`; its 5,014 ms LCP and category scores are not representative of a working credential page. `/manage` was an invalid-link shell, not a recipient-management session. Do not treat these as production performance claims.
+
+Final isolated build output: 288 modules; main JS 1,509.78 kB (gzip 498.20 kB), PDF worker 1,271.91 kB, QR worker 43.95 kB, CSS 37.38 kB (gzip 9.14 kB). The client-bundle scan passed for 12 built files, and Vite still reports the main chunk over its 500 kB warning threshold.
+
+The earlier H2 record measured the main JS at 1,218.45 kB (gzip 422.28 kB): the current output is 291.33 kB larger raw and 75.92 kB larger gzip. The audit-tool additions are devDependencies, and the lockfile comparison found no changed existing runtime package versions; the exact source-level reason for the bundle increase remains **UNVERIFIED**. No code-splitting change was made. Proposed follow-up remains lazy-loading the Admin/share routes and loading camera, QR, and PDF/stamping code only when those workflows are opened; verify the new chunks and rerun Lighthouse before accepting that change.
+
+### H4 raw local outputs
+
+```text
+axe-core 4.14.1, WCAG 2.0/2.1 A/AA, viewport 360 x 800
+/                                      0 violations; width 348
+/verify/<synthetic-id>                 0 violations; width 345
+/c/<synthetic-id> loading state        0 violations; width 360
+/manage, no valid recipient link       0 violations; width 360
+/invite, no invitation token           0 violations; width 360
+/admin sign-in                         0 violations; width 360
+/admin mock dashboard loading/empty    0 violations; width 345
+Not Found                              0 violations; width 360
+```
+
+```text
+Browser-dispatched offline event:
+Anda sedang offline. Perubahan baru tidak akan tersimpan sampai koneksi pulih.
+Browser-dispatched online event:
+Koneksi internet pulih.
+```
+
+```text
+Lighthouse 13.6.0; isolated local production build; DNS blocked except loopback
+/                                      80 / 100 / 100 / 91; FCP 775 ms; LCP 775 ms; TBT 823 ms; CLS 0.042
+/verify/<synthetic-id>                 87 / 100 / 100 / 91; FCP 764 ms; LCP 764 ms; TBT 494 ms; CLS 0.000
+/c/<synthetic-id>                      71 / 100 / 96 / 91; FCP 763 ms; LCP 5014 ms; TBT 439 ms; CLS 0.000
+/manage                                90 / 100 / 100 / 91; FCP 765 ms; LCP 765 ms; TBT 424 ms; CLS 0.001
+Score order: Performance / Accessibility / Best Practices / SEO
+```
+
+```text
+npm test
+Test Files  9 passed (9)
+Tests       41 passed (41)
+
+npm run lint
+> eslint .
+
+npm run typecheck
+> tsc -b
+
+npm run verify:client-bundle
+Client bundle check passed (12 built files).
+```
+
+### H4 blockers
+
+1. Provide a deterministic local authenticated fixture/backend, then run axe and 360 px checks on the actual issuance wizard and stamping review, plus authenticated `/manage` and invitation success/error states.
+2. Resolve and explain the 291.33 kB raw / 75.92 kB gzip main-bundle increase relative to H2; the main chunk remains above the warning threshold. Route-level splitting is proposed, not implemented.
+3. Repeat Lighthouse on a local/staging deployment with representative credential and recipient data paths; synthetic backend-disabled measurements are not production evidence.
+4. Consolidate the remaining English interface copy if complete Indonesian localization is required; only the new error/network strings were centralized in this phase.
+
+H4 is complete only to the locally proven extent above. **Do not proceed to H5 without approval.**

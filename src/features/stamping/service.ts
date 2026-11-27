@@ -67,10 +67,11 @@ export async function callStampPreview(
 export async function retryStampFile(
   stampFileId: string,
   wait: (milliseconds: number) => Promise<void> = sleep,
+  invoke: (name: string, body: Record<string, unknown>) => Promise<unknown> = callStampFunction,
 ): Promise<void> {
   for (let attempt = 0; attempt < 3; attempt += 1) {
     try {
-      await callStampFunction('stamp-one-file', { stampFileId })
+      await invoke('stamp-one-file', { stampFileId })
       return
     } catch (error) {
       if (!(error instanceof StampServiceError) || !isRetryableDriveFailure(error) || attempt === 2) throw error
@@ -87,7 +88,7 @@ function isRetryableDriveFailure(error: StampServiceError): boolean {
 
 async function toStampServiceError(error: { context?: unknown; message: string }): Promise<StampServiceError> {
   if (error.context instanceof Response) return readResponseError(error.context)
-  return new StampServiceError(error.message || 'stamping_service_unavailable', 503)
+  return new StampServiceError('stamping_service_unavailable', 503)
 }
 
 async function readResponseError(response: Response): Promise<StampServiceError> {

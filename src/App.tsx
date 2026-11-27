@@ -6,6 +6,8 @@ import QRCode from 'qrcode'
 import Admin from './Admin'
 import { getPublicSiteUrl } from './config/brand'
 import { supabase } from './lib/supabase'
+import { requestErrorMessage } from './lib/request-error'
+import { NetworkStatus } from './components/NetworkStatus'
 import { copyId } from './copy/id'
 import './App.css'
 
@@ -61,7 +63,7 @@ function OrganizationInvitationPage() {
     })
     void supabase.auth.getSession().then(({ data, error: sessionError }) => {
       if (!active) return
-      if (sessionError) setError(sessionError.message)
+      if (sessionError) setError(requestErrorMessage(sessionError, copyId.errors.requestFailed))
       setSession(data.session)
       setLoading(false)
     })
@@ -85,7 +87,7 @@ function OrganizationInvitationPage() {
       setSession(data.session)
       setPassword('')
     } catch (cause) {
-      setError(cause instanceof Error ? cause.message : 'Sign-in failed.')
+      setError(requestErrorMessage(cause, copyId.errors.signInFailed))
     } finally {
       setBusy(false)
     }
@@ -106,7 +108,7 @@ function OrganizationInvitationPage() {
       if (!data?.organizationName) throw new Error('Invitation service returned an invalid response.')
       setMessage(`You joined ${data.organizationName} as ${data.role}.`)
     } catch (cause) {
-      setError(cause instanceof Error ? cause.message : 'Could not accept this invitation.')
+      setError(requestErrorMessage(cause, copyId.errors.invitationFailed))
     } finally {
       setBusy(false)
     }
@@ -151,25 +153,29 @@ function OrganizationInvitationPage() {
 function Header() {
   return (
     <header className="topbar">
-      <Link className="brand" to="/" aria-label="Credential Hub home">
-        <span className="brand-mark">t</span>
+      <Link className="brand" to="/">
+        <span className="brand-mark" aria-hidden="true">t</span>
         <span>credential hub</span>
       </Link>
-      <Link className="nav-link" to="/#verify">Verify a credential <span aria-hidden="true">↗</span></Link>
+      <nav aria-label="Navigasi utama">
+        <Link className="nav-link" to="/#verify">Verify a credential <span aria-hidden="true">↗</span></Link>
+      </nav>
     </header>
   )
 }
 
 function PortalLayout({ children }: { children: ReactNode }) {
   return (
-    <main className="portal">
+    <div className="portal">
+      <a className="skip-link" href="#main-content">{copyId.navigation.skipToMain}</a>
       <Header />
-      {children}
+      <NetworkStatus />
+      <main id="main-content">{children}</main>
       <footer className="footer">
         <span>Credentials you can trust.</span>
         <span>Issued with Open Badges 3.0</span>
       </footer>
-    </main>
+    </div>
   )
 }
 
@@ -209,7 +215,7 @@ function VerificationForm({ initialValue = '' }: { initialValue?: string }) {
       { onDecodeError: () => undefined, highlightScanRegion: true, highlightCodeOutline: true },
     )
     void scanner.start().catch((cause: unknown) => {
-      setError(cause instanceof Error ? cause.message : 'Camera access is unavailable.')
+      setError(requestErrorMessage(cause, copyId.errors.cameraUnavailable))
       setScannerOpen(false)
     })
     return () => scanner.destroy()
@@ -240,11 +246,11 @@ function VerificationForm({ initialValue = '' }: { initialValue?: string }) {
         ? { id: uuid ? trimmed : (idRoute ?? credentialUrl)![1] }
         : trimmed.startsWith('http') ? { url: trimmed } : { jws: trimmed }
       const { data, error: invokeError } = await supabase.functions.invoke<VerificationResult>('verify-credential', { body })
-      if (invokeError) throw new Error(invokeError.message)
+      if (invokeError) throw invokeError
       if (!data) throw new Error('Verification service returned no result.')
       setResult(data)
     } catch (cause) {
-      setError(cause instanceof Error ? cause.message : 'Could not verify this credential.')
+      setError(requestErrorMessage(cause, copyId.errors.verificationFailed))
     } finally {
       setBusy(false)
     }
@@ -356,11 +362,11 @@ function HomePage() {
         </div>
         <div className="credential-art" aria-hidden="true">
           <div className="art-glow" />
-          <div className="art-card art-card-back"><span>ACHIEVEMENT</span><i>✳</i></div>
+          <div className="art-card art-card-back"><span>ACHIEVEMENT</span><span className="art-seal" aria-hidden="true">CH</span></div>
           <div className="art-card art-card-main">
             <div className="art-top"><span className="brand-mark">t</span><span className="verified-tag">✓ VERIFIED</span></div>
             <span className="art-label">CERTIFICATE OF ACHIEVEMENT</span>
-            <span className="art-star">✳</span>
+            <span className="art-star" aria-hidden="true" />
             <strong>Every skill<br />has a story.</strong>
             <span className="art-rule" />
             <span className="art-caption">Issued by a trusted organization</span>
@@ -401,15 +407,15 @@ function CredentialPage() {
       QRCode.toDataURL(shareUrl, { width: 220, margin: 1, color: { dark: '#12231e', light: '#ffffff' } }),
     ]).then(([credentialResponse, verifyResponse, qrData]) => {
       if (!active) return
-      if (credentialResponse.error) throw new Error(credentialResponse.error.message)
-      if (verifyResponse.error) throw new Error(verifyResponse.error.message)
+      if (credentialResponse.error) throw credentialResponse.error
+      if (verifyResponse.error) throw verifyResponse.error
       setCredential(credentialResponse.data?.credential ?? null)
       setRedacted(credentialResponse.data?.revoked ?? false)
       setResult(verifyResponse.data ?? null)
       setQr(qrData)
       if (!credentialResponse.data) setError('This credential is not available.')
     }).catch((cause: unknown) => {
-      if (active) setError(cause instanceof Error ? cause.message : 'Could not load this credential.')
+      if (active) setError(requestErrorMessage(cause, copyId.errors.credentialUnavailable))
     })
     return () => { active = false }
   }, [id, shareUrl])
@@ -420,7 +426,7 @@ function CredentialPage() {
       setCopied(true)
       window.setTimeout(() => setCopied(false), 1800)
     } catch (cause) {
-      setError(cause instanceof Error ? cause.message : 'Could not copy the credential link.')
+      setError(requestErrorMessage(cause, copyId.errors.copyUnavailable))
     }
   }
 
@@ -442,7 +448,7 @@ function CredentialPage() {
             </div>
             <article className="share-credential">
               <span className="eyebrow">{redacted ? 'REDACTED CREDENTIAL' : 'DIGITAL CREDENTIAL'}</span>
-              <div className="share-emblem">{redacted ? '×' : '✳'}</div>
+              <div className="share-emblem" aria-hidden="true">{redacted ? '×' : 'CH'}</div>
               {redacted ? (
                 <>
                   <h1>Credential data deleted</h1>
@@ -509,7 +515,7 @@ function AdminRoute() {
     })
     void supabase.auth.getSession().then(({ data, error: sessionError }) => {
       if (!active) return
-      if (sessionError) setError(sessionError.message)
+      if (sessionError) setError(requestErrorMessage(sessionError, copyId.errors.requestFailed))
       setSession(data.session)
       setLoading(false)
     })
@@ -532,7 +538,7 @@ function AdminRoute() {
       if (signInError) throw signInError
       setSession(data.session)
     } catch (cause) {
-      setError(cause instanceof Error ? cause.message : 'Sign-in failed.')
+      setError(requestErrorMessage(cause, copyId.errors.signInFailed))
     } finally {
       setLoading(false)
     }
@@ -544,7 +550,7 @@ function AdminRoute() {
       const { error: signOutError } = await supabase.auth.signOut()
       if (signOutError) throw signOutError
     } catch (cause) {
-      setError(cause instanceof Error ? cause.message : 'Sign-out failed.')
+      setError(requestErrorMessage(cause, copyId.errors.signOutFailed))
     }
   }
 
@@ -628,7 +634,7 @@ function RecipientManagementPage() {
       setFullNameConsent(data.credential.fullNameConsent)
       setPendingToken('')
     } catch (cause) {
-      setError(cause instanceof Error ? cause.message : 'This management link is invalid or expired.')
+      setError(requestErrorMessage(cause, copyId.errors.managementLinkInvalid))
     } finally {
       setBusy(false)
     }
@@ -655,7 +661,7 @@ function RecipientManagementPage() {
       setCredential({ ...credential, visibility: data.visibility })
       setMessage(`Visibility updated to ${data.visibility}.`)
     } catch (cause) {
-      setError(cause instanceof Error ? cause.message : 'Could not update credential visibility.')
+      setError(requestErrorMessage(cause, copyId.errors.managementUpdateFailed))
     } finally {
       setBusy(false)
     }
@@ -693,7 +699,7 @@ function RecipientManagementPage() {
       setFullNameConsent(data.fullNameConsent)
       setMessage('Name-display consent updated.')
     } catch (cause) {
-      setError(cause instanceof Error ? cause.message : 'Could not update name-display consent.')
+      setError(requestErrorMessage(cause, copyId.errors.managementUpdateFailed))
     } finally {
       setBusy(false)
     }

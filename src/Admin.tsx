@@ -3,12 +3,29 @@ import { Link } from 'react-router-dom'
 import Papa from 'papaparse'
 import type { Session } from '@supabase/supabase-js'
 import { supabase } from './lib/supabase'
+import { requestErrorMessage } from './lib/request-error'
+import { NetworkStatus } from './components/NetworkStatus'
+import { copyId } from './copy/id'
 import DriveStamping from './features/stamping/DriveStamping'
 
 type Organization = { id: string; name: string; slug: string }
 type Membership = { role: 'owner' | 'admin' | 'issuer' | 'viewer'; organizations: Organization }
-type EventRecord = { id: string; name: string; event_date: string | null; status: string }
-type Achievement = { id: string; name: string; event_id: string | null; criteria_narrative: string | null }
+type EventRecord = {
+  id: string
+  name: string
+  event_date: string | null
+  location: string | null
+  description: string | null
+  serial_prefix: string | null
+  status: string
+}
+type Achievement = {
+  id: string
+  name: string
+  event_id: string | null
+  category: string | null
+  criteria_narrative: string | null
+}
 type Batch = { id: string; created_at: string; status: string; total: number; processed_count: number; succeeded: number; failed: number }
 type Credential = { id: string; serial_number: string; issued_at: string | null; status: string; visibility: string; achievement_id: string | null }
 type OrganizationMember = { user_id: string; role: 'owner' | 'admin' | 'issuer' | 'viewer'; joined_at: string }
@@ -19,15 +36,21 @@ type CsvRow = Record<string, string>
 const csvColumns = ['full_name', 'email']
 
 function messageOf(error: unknown): string {
-  return error instanceof Error ? error.message : 'Something went wrong. Please try again.'
+  return requestErrorMessage(error, copyId.errors.requestFailed)
 }
 
 function AdminHeader() {
   return (
-    <header className="topbar">
-      <Link className="brand" to="/"><span className="brand-mark">t</span><span>credential hub</span></Link>
-      <Link className="nav-link" to="/">Public credential portal <span aria-hidden="true">↗</span></Link>
-    </header>
+    <>
+      <a className="skip-link" href="#admin-content">{copyId.navigation.skipToMain}</a>
+      <header className="topbar">
+        <Link className="brand" to="/"><span className="brand-mark" aria-hidden="true">t</span><span>credential hub</span></Link>
+        <nav aria-label="Navigasi utama">
+          <Link className="nav-link" to="/">Public credential portal <span aria-hidden="true">↗</span></Link>
+        </nav>
+      </header>
+      <NetworkStatus />
+    </>
   )
 }
 
@@ -48,10 +71,18 @@ export default function Admin({ session, onSignOut }: { session: Session; onSign
   const [organizationName, setOrganizationName] = useState('')
   const [organizationSlug, setOrganizationSlug] = useState('')
   const [eventName, setEventName] = useState('')
+  const [eventDate, setEventDate] = useState('')
+  const [eventLocation, setEventLocation] = useState('')
+  const [eventDescription, setEventDescription] = useState('')
+  const [eventSerialPrefix, setEventSerialPrefix] = useState('')
   const [achievementName, setAchievementName] = useState('')
+  const [achievementCategory, setAchievementCategory] = useState('')
   const [achievementDescription, setAchievementDescription] = useState('')
   const [achievementCriteria, setAchievementCriteria] = useState('')
   const [achievementEventId, setAchievementEventId] = useState('')
+  const [participantName, setParticipantName] = useState('')
+  const [participantEmail, setParticipantEmail] = useState('')
+  const [participantExternalId, setParticipantExternalId] = useState('')
   const [memberEmail, setMemberEmail] = useState('')
   const [memberRole, setMemberRole] = useState<'admin' | 'issuer' | 'viewer'>('viewer')
   const [selectedEvent, setSelectedEvent] = useState('')
@@ -73,8 +104,8 @@ export default function Admin({ session, onSignOut }: { session: Session; onSign
     if (!supabase) return
     setError('')
     const [eventResult, achievementResult, batchResult, credentialResult, memberResult] = await Promise.all([
-      supabase.from('events').select('id, name, event_date, status').eq('organization_id', organizationId).order('created_at', { ascending: false }),
-      supabase.from('achievements').select('id, name, event_id, criteria_narrative').eq('organization_id', organizationId).order('created_at', { ascending: false }),
+      supabase.from('events').select('id, name, event_date, location, description, serial_prefix, status').eq('organization_id', organizationId).order('created_at', { ascending: false }),
+      supabase.from('achievements').select('id, name, event_id, category, criteria_narrative').eq('organization_id', organizationId).order('created_at', { ascending: false }),
       supabase.from('issuance_batches').select('id, created_at, status, total, processed_count, succeeded, failed').eq('organization_id', organizationId).order('created_at', { ascending: false }).limit(10),
       supabase.from('credentials').select('id, serial_number, issued_at, status, visibility, achievement_id').eq('organization_id', organizationId).order('issued_at', { ascending: false }).limit(20),
       supabase.from('organization_members').select('user_id, role, joined_at').eq('organization_id', organizationId).order('joined_at'),
@@ -142,25 +173,25 @@ export default function Admin({ session, onSignOut }: { session: Session; onSign
 
   if (!organizationsLoaded && !organization && !busy) {
     return (
-      <main className="portal admin-portal">
+      <div className="portal admin-portal">
         <AdminHeader />
-        <section className="admin-content">
+        <main className="admin-content" id="admin-content">
           <div className="admin-heading"><span className="eyebrow">ISSUER WORKSPACE</span><h1>Workspace unavailable</h1></div>
           {error && <p className="admin-error" role="alert">{error}</p>}
           <button className="button button-secondary" disabled={busy} onClick={() => {
             setBusy(true)
             void loadOrganizations().catch((cause: unknown) => setError(messageOf(cause))).finally(() => setBusy(false))
           }}>Try again</button>
-        </section>
-      </main>
+        </main>
+      </div>
     )
   }
 
   if (organizationsLoaded && !memberships.length && !organization) {
     return (
-      <main className="portal admin-portal">
+      <div className="portal admin-portal">
         <AdminHeader />
-        <section className="admin-content">
+        <main className="admin-content" id="admin-content">
           <div className="admin-heading"><span className="eyebrow">ISSUER WORKSPACE</span><h1>Create your organization</h1><p>This account does not belong to an issuer yet. Only the configured, verified owner email can create an organization. If you have been invited, sign in with that account.</p></div>
           <form className="admin-card admin-form" onSubmit={(event) => {
             event.preventDefault()
@@ -198,8 +229,8 @@ export default function Admin({ session, onSignOut }: { session: Session; onSign
             <button className="button button-primary" disabled={busy || !organizationName.trim() || !organizationSlug.trim()}>{busy ? 'Creating…' : 'Create organization'}</button>
           </form>
           <button className="admin-signout" onClick={onSignOut}>Sign out</button>
-        </section>
-      </main>
+        </main>
+      </div>
     )
   }
 
@@ -215,13 +246,23 @@ export default function Admin({ session, onSignOut }: { session: Session; onSign
     setBusy(true)
     setError('')
     try {
-      const { error: insertError } = await supabase.from('events').insert({
+      const { data: createdEvent, error: insertError } = await supabase.from('events').insert({
         organization_id: organization.id,
         name: eventName.trim().replace(/\s+/g, ' '),
+        event_date: eventDate || null,
+        location: eventLocation.trim().replace(/\s+/g, ' ') || null,
+        description: eventDescription.trim().replace(/\s+/g, ' ') || null,
+        serial_prefix: eventSerialPrefix.trim() || null,
         status: 'active',
-      })
+      }).select('id').single()
       if (insertError) throw insertError
       setEventName('')
+      setEventDate('')
+      setEventLocation('')
+      setEventDescription('')
+      setEventSerialPrefix('')
+      setSelectedEvent(createdEvent.id)
+      setAchievementEventId(createdEvent.id)
       setMessage('Event created.')
       await loadDashboard(organization.id, dashboardRole)
     } catch (cause) {
@@ -241,12 +282,14 @@ export default function Admin({ session, onSignOut }: { session: Session; onSign
         organization_id: organization.id,
         event_id: achievementEventId || null,
         name: achievementName.trim().replace(/\s+/g, ' '),
+        category: achievementCategory.trim().replace(/\s+/g, ' ') || null,
         description: achievementDescription.trim(),
         criteria_narrative: achievementCriteria.trim(),
         status: 'active',
       })
       if (insertError) throw insertError
       setAchievementName('')
+      setAchievementCategory('')
       setAchievementDescription('')
       setAchievementCriteria('')
       setMessage('Achievement created.')
@@ -256,6 +299,25 @@ export default function Admin({ session, onSignOut }: { session: Session; onSign
     } finally {
       setBusy(false)
     }
+  }
+
+  function addParticipant(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault()
+    const full_name = participantName.trim().replace(/\s+/g, ' ')
+    const email = participantEmail.trim().toLowerCase()
+    const external_id = participantExternalId.trim().replace(/\s+/g, ' ')
+    if (!full_name || !email) return
+    setRows((current) => [...current, {
+      full_name,
+      email,
+      ...(external_id ? { external_id } : {}),
+    }])
+    setCsvName('')
+    setParticipantName('')
+    setParticipantEmail('')
+    setParticipantExternalId('')
+    setError('')
+    setMessage('Participant added to the review list.')
   }
 
   async function readCsv(file?: File) {
@@ -274,16 +336,18 @@ export default function Admin({ session, onSignOut }: { session: Session; onSign
           setError(
             missing.length
               ? `Missing required columns: ${missing.join(', ')}`
-              : result.errors[0]?.message ?? (result.data.length > 1000
+              : result.errors.length
+                ? 'CSV could not be read. Check that the file uses a valid comma-separated format.'
+                : result.data.length > 1000
                 ? 'A batch can contain at most 1,000 recipients.'
-                : 'The CSV has no recipient rows.'),
+                : 'The CSV has no recipient rows.',
           )
           return
         }
         setRows(result.data)
         setMessage(`${result.data.length} recipient rows loaded.`)
       },
-      error: (cause) => setError(cause.message),
+      error: () => setError('CSV could not be read. Check that the file uses a valid comma-separated format.'),
     })
   }
 
@@ -474,15 +538,8 @@ export default function Admin({ session, onSignOut }: { session: Session; onSign
         body: JSON.stringify({ credentialId: credential.id }),
       })
       if (!response.ok) {
-        const responseText = await response.text()
-        let detail = responseText
-        try {
-          const responseBody = JSON.parse(responseText) as { error?: string }
-          detail = responseBody.error ?? responseText
-        } catch {
-          detail = responseText
-        }
-        throw new Error(detail || `PDF generation failed (${response.status}).`)
+        setError(requestErrorMessage({ status: response.status }, copyId.errors.requestFailed))
+        return
       }
       const url = URL.createObjectURL(await response.blob())
       const link = document.createElement('a')
@@ -558,13 +615,14 @@ export default function Admin({ session, onSignOut }: { session: Session; onSign
   }
 
   return (
-    <main className="portal admin-portal">
+    <div className="portal admin-portal">
       <AdminHeader />
-      <section className="admin-content">
+      <main className="admin-content" id="admin-content">
         <div className="admin-heading">
           <span className="eyebrow">ISSUER WORKSPACE</span>
           <div className="admin-title-row"><div><h1>Credential dashboard</h1><p>Manage events, achievements, and credential issuance.</p></div><button className="admin-signout" onClick={onSignOut}>Sign out</button></div>
         </div>
+        {busy && <p className="admin-loading" role="status" aria-live="polite">{copyId.common.loading}…</p>}
         {memberships.length > 1 && (
           <label className="org-switcher">Organization
             <select value={organization?.id ?? ''} onChange={(event) => {
@@ -595,18 +653,24 @@ export default function Admin({ session, onSignOut }: { session: Session; onSign
             <form className="admin-card admin-form" onSubmit={(event) => void createEvent(event)}>
               <span className="eyebrow">EVENTS</span><h2>Create event</h2>
               <label>Event name<input value={eventName} onChange={(event) => setEventName(event.target.value)} required maxLength={200} /></label>
+              <label>Event date<input type="date" value={eventDate} onChange={(event) => setEventDate(event.target.value)} /></label>
+              <label>Location<input value={eventLocation} onChange={(event) => setEventLocation(event.target.value)} maxLength={200} /></label>
+              <label>Description<textarea value={eventDescription} onChange={(event) => setEventDescription(event.target.value)} maxLength={2000} rows={2} /></label>
+              <label>Credential serial prefix (optional)<input value={eventSerialPrefix} onChange={(event) => setEventSerialPrefix(event.target.value.toUpperCase())} placeholder="CTF/HIMASTI/001" pattern="[A-Z0-9][A-Z0-9._-]*(/[A-Z0-9][A-Z0-9._-]*){0,3}" maxLength={80} title="Use 1–4 slash-separated codes with letters, numbers, dot, underscore, or hyphen." /></label>
+              <p className="stamping-note">Issued serials will look like <code>CTF/HIMASTI/001/000123</code>. The final number is allocated atomically from the organization-wide sequence; it is not a participant ID. Prefixes must be unique across events.</p>
               <button className="button button-primary" disabled={busy || !eventName.trim()}>{busy ? 'Saving…' : 'Add event'}</button>
-              <ul className="admin-list">{events.slice(0, 5).map((item) => <li key={item.id}><span>{item.name}</span><small>{item.event_date ?? item.status}</small></li>)}</ul>
+              <ul className="admin-list">{events.length ? events.slice(0, 5).map((item) => <li key={item.id}><span>{item.name}</span><small>{[item.event_date, item.location, item.serial_prefix].filter(Boolean).join(' · ') || item.status}</small></li>) : <li><span>No events yet.</span></li>}</ul>
             </form>
 
             <form className="admin-card admin-form" onSubmit={(event) => void createAchievement(event)}>
-              <span className="eyebrow">ACHIEVEMENTS</span><h2>Create achievement</h2>
+              <span className="eyebrow">CERTIFICATE CATEGORIES</span><h2>Create achievement</h2>
               <label>Achievement name<input value={achievementName} onChange={(event) => setAchievementName(event.target.value)} required maxLength={200} /></label>
+              <label>Category<input value={achievementCategory} onChange={(event) => setAchievementCategory(event.target.value)} placeholder="Participant, Speaker, Winner" maxLength={100} /></label>
               <label>Event<select value={achievementEventId} onChange={(event) => setAchievementEventId(event.target.value)}><option value="">Not linked to an event</option>{events.map((item) => <option value={item.id} key={item.id}>{item.name}</option>)}</select></label>
               <label>Description<textarea value={achievementDescription} onChange={(event) => setAchievementDescription(event.target.value)} required maxLength={2000} rows={2} /></label>
               <label>Criteria narrative<textarea value={achievementCriteria} onChange={(event) => setAchievementCriteria(event.target.value)} required maxLength={4000} rows={2} /></label>
               <button className="button button-primary" disabled={busy || !achievementName.trim() || !achievementDescription.trim() || !achievementCriteria.trim()}>{busy ? 'Saving…' : 'Add achievement'}</button>
-              <ul className="admin-list">{achievements.slice(0, 5).map((item) => <li key={item.id}><span>{item.name}</span><small>{item.criteria_narrative ? 'Ready to issue' : 'Add criteria before issue'}</small></li>)}</ul>
+              <ul className="admin-list">{achievements.length ? achievements.slice(0, 5).map((item) => <li key={item.id}><span>{item.category ? `${item.category} · ` : ''}{item.name}</span><small>{item.criteria_narrative ? 'Ready to issue' : 'Add criteria before issue'}</small></li>) : <li><span>No achievements yet.</span></li>}</ul>
             </form>
           </div>
         )}
@@ -642,17 +706,48 @@ export default function Admin({ session, onSignOut }: { session: Session; onSign
 
         {canIssue && (
           <section className="admin-card issuance-card">
-            <span className="eyebrow">BULK ISSUANCE</span><h2>Issue credentials from CSV</h2>
-            <p>Required columns: <code>full_name,email</code>. Optional: <code>issued_on,expires_on</code>. Recipient name-display consent is collected separately through the recipient management link. Rows are processed in server-side chunks of 50.</p>
+            <span className="eyebrow">PARTICIPANTS & CREDENTIALS</span><h2>Prepare an event participant list</h2>
+            <p>Select the event and certificate category, then add participants one at a time or import a CSV. Participant IDs are optional, private account data; they are not included in the signed credential and are removed if the recipient is anonymized.</p>
             <div className="issuance-controls">
-              <label>Event<select value={selectedEvent} onChange={(event) => setSelectedEvent(event.target.value)} required><option value="">Choose event</option>{events.map((item) => <option value={item.id} key={item.id}>{item.name}</option>)}</select></label>
-              <label>Achievement<select value={selectedAchievement} onChange={(event) => setSelectedAchievement(event.target.value)} required><option value="">Choose achievement</option>{achievements.map((item) => <option value={item.id} key={item.id}>{item.name}</option>)}</select></label>
+              <label>Event<select value={selectedEvent} onChange={(event) => {
+                setSelectedEvent(event.target.value)
+                setSelectedAchievement('')
+              }} required><option value="">Choose event</option>{events.map((item) => <option value={item.id} key={item.id}>{item.name}</option>)}</select></label>
+              <label>Category / achievement<select value={selectedAchievement} onChange={(event) => setSelectedAchievement(event.target.value)} required disabled={!selectedEvent}><option value="">Choose category</option>{achievements.filter((item) => item.event_id === selectedEvent).map((item) => <option value={item.id} key={item.id}>{item.category ? `${item.category} · ` : ''}{item.name}</option>)}</select></label>
               <label>Duplicate policy<select value={duplicatePolicy} onChange={(event) => setDuplicatePolicy(event.target.value as typeof duplicatePolicy)}><option value="skip">Skip duplicates (default)</option><option value="reissue">Reissue</option><option value="error">Mark as error</option></select></label>
               <label>Visibility<select value={visibility} onChange={(event) => setVisibility(event.target.value as typeof visibility)}><option value="unlisted">Unlisted (default)</option><option value="public">Public</option></select></label>
             </div>
+            {events.find((item) => item.id === selectedEvent)?.serial_prefix && (
+              <p className="stamping-note">Serial format for this event: <code>{events.find((item) => item.id === selectedEvent)?.serial_prefix}/000123</code>. The numeric suffix is globally allocated within this organization and does not contain participant data.</p>
+            )}
             <label className="email-option"><input type="checkbox" checked={sendEmail} onChange={(event) => setSendEmail(event.target.checked)} /> Send credential emails after successful issuance (daily plan limit applies)</label>
-            <label className="csv-upload">Choose recipient CSV<input type="file" accept=".csv,text/csv" onChange={(event) => void readCsv(event.target.files?.[0])} /></label>
+            <form className="participant-entry-form" onSubmit={addParticipant}>
+              <label>Participant name<input value={participantName} onChange={(event) => setParticipantName(event.target.value)} required maxLength={200} /></label>
+              <label>Participant ID (optional)<input value={participantExternalId} onChange={(event) => setParticipantExternalId(event.target.value)} maxLength={120} /></label>
+              <label>Email<input type="email" value={participantEmail} onChange={(event) => setParticipantEmail(event.target.value)} required maxLength={320} /></label>
+              <button className="button button-secondary" disabled={!participantName.trim() || !participantEmail.trim()}>Add participant</button>
+            </form>
+            <p className="stamping-note">For a CSV, required columns: <code>full_name,email</code>. Optional: <code>external_id,issued_on,expires_on</code>. Add one row per participant in the selected category; a category/achievement is issued as its own batch. Rows are processed in server-side chunks of 50.</p>
+            <label className="csv-upload">{rows.length ? 'Replace participant list with CSV' : 'Import participant CSV'}<input type="file" accept=".csv,text/csv" onChange={(event) => void readCsv(event.target.files?.[0])} /></label>
             {csvName && <span className="csv-summary">{csvName} · {rows.length} rows ready</span>}
+            {rows.length > 0 && (
+              <div className="participant-review">
+                <div className="stamping-section-heading"><strong>{rows.length} participants in this batch</strong><button className="button button-quiet" type="button" onClick={() => { setRows([]); setCsvName('') }}>Clear list</button></div>
+                <div className="participant-table" role="table" aria-label="Participant list for credential issuance">
+                  <div className="participant-row participant-row-header" role="row">
+                    <span role="columnheader">Name</span><span role="columnheader">Participant ID</span><span role="columnheader">Email</span><span role="columnheader">Action</span>
+                  </div>
+                  {rows.map((row, index) => (
+                    <div className="participant-row" role="row" key={`${row.email}-${index}`}>
+                      <span role="cell">{row.full_name}</span>
+                      <span role="cell">{row.external_id || '—'}</span>
+                      <span role="cell">{row.email}</span>
+                      <span role="cell"><button className="button button-quiet" type="button" aria-label={`Remove ${row.full_name}`} onClick={() => setRows((current) => current.filter((_, rowIndex) => rowIndex !== index))}>Remove</button></span>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
             <button className="button button-primary" disabled={busy || !rows.length || !selectedEvent || !selectedAchievement} onClick={() => void issueCsv()}>{busy ? 'Processing…' : `Issue ${rows.length || ''} credentials`}</button>
           </section>
         )}
@@ -713,7 +808,7 @@ export default function Admin({ session, onSignOut }: { session: Session; onSign
           </section>
         )}
         <button className="admin-reload" disabled={busy} onClick={() => { if (organization) void loadDashboard(organization.id, dashboardRole).catch((cause: unknown) => setError(messageOf(cause))) }}>Refresh dashboard</button>
-      </section>
-    </main>
+      </main>
+    </div>
   )
 }

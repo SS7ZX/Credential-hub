@@ -378,6 +378,20 @@ select is(
     'completed_with_errors',
     'run state and counters reflect a failed file'
 );
+select ok(
+    public.claim_stamp_file(
+      (select id from public.stamp_files where drive_file_id = 'drive_file_12345'),
+      repeat('c', 64)
+    )->>'storagePath' is not null,
+    'failed Storage upload can reclaim the file with the same Drive source'
+);
+select lives_ok(
+    $$select public.complete_stamp_file(
+      (select id from public.stamp_files where drive_file_id = 'drive_file_12345'),
+      false, null, 'storage_upload_failed'
+    )$$,
+    'retry can record another Storage upload failure and release its lease'
+);
 select throws_ok(
     $$select public.claim_stamp_file(
       (select id from public.stamp_files where drive_file_id = 'drive_file_12345'),

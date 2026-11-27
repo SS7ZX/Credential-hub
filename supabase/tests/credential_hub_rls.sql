@@ -77,8 +77,43 @@ insert into public.issuance_rows (
     status, credential_id
 )
 values
-    ('71000000-0000-0000-0000-000000000001', '20000000-0000-0000-0000-000000000001', '70000000-0000-0000-0000-000000000001', 1, '{"email":"recipient-a@test.invalid","full_name":"Recipient A"}', 'row-a', 'succeeded', '80000000-0000-0000-0000-000000000001'),
+    ('71000000-0000-0000-0000-000000000001', '20000000-0000-0000-0000-000000000001', '70000000-0000-0000-0000-000000000001', 1, '{"email":"recipient-a@test.invalid","full_name":"Recipient A","external_id":"NIM 001"}', 'row-a', 'succeeded', '80000000-0000-0000-0000-000000000001'),
     ('71000000-0000-0000-0000-000000000002', '20000000-0000-0000-0000-000000000002', '70000000-0000-0000-0000-000000000002', 1, '{}', 'row-b', 'succeeded', '80000000-0000-0000-0000-000000000002');
+
+update public.events
+set serial_prefix = 'ctf/himasti/001'
+where id = '30000000-0000-0000-0000-000000000001';
+select is(
+    (select serial_prefix from public.events where id = '30000000-0000-0000-0000-000000000001'),
+    'CTF/HIMASTI/001',
+    'event serial prefix is normalized to uppercase'
+);
+select throws_ok(
+    $$update public.events
+      set serial_prefix = 'CTF/HIMASTI/001'
+      where id = '30000000-0000-0000-0000-000000000002'$$,
+    '23505', null, 'custom serial prefixes must be unique across events'
+);
+update public.credentials
+set serial_number = 'TEST-000042'
+where id = '80000000-0000-0000-0000-000000000001';
+select is(
+    (select serial_number from public.credentials where id = '80000000-0000-0000-0000-000000000001'),
+    'CTF/HIMASTI/001/000042',
+    'event serial prefix formats a serial using the atomically allocated sequence'
+);
+update public.events
+set serial_prefix = null
+where id = '30000000-0000-0000-0000-000000000001';
+update public.credentials
+set serial_number = 'ORG-A-000001'
+where id = '80000000-0000-0000-0000-000000000001';
+
+select is(
+    (select external_id from public.recipients where id = '60000000-0000-0000-0000-000000000001'),
+    'NIM 001',
+    'successful issuance rows atomically sync the optional external recipient ID'
+);
 
 insert into public.status_lists (organization_id, revoked_credential_ids)
 values
@@ -453,6 +488,54 @@ select lives_ok(
         'unlisted', '{}'::jsonb, 'issuer-test-jws', 'key-a', 'hash-content', null
     )$$,
     'service role can persist an issued credential for an issuer after internal role validation'
+);
+select is(
+    public.persist_issuance_row(
+        '10000000-0000-0000-0000-000000000003',
+        (select id from public.issuance_batches where organization_id = '20000000-0000-0000-0000-000000000001' and created_by = '10000000-0000-0000-0000-000000000003' order by created_at desc limit 1),
+        1, '{"email":"new@test.invalid"}'::jsonb, 'issuer-row-unique',
+        'New Recipient', 'new@test.invalid', 'hash-new', 'salt-new', 'skip',
+        '81000000-0000-0000-0000-000000000001', now(), null,
+        'unlisted', '{}'::jsonb, 'issuer-test-jws', 'key-a', 'hash-content', null
+    )->>'outcome',
+    'replayed',
+    'duplicate issuance submit replays the prior successful row'
+);
+select is(
+    (select count(*)::int from public.issuance_rows where idempotency_key = 'issuer-row-unique'),
+    1,
+    'duplicate issuance submit does not create another row'
+);
+select is(
+    (select processed_count from public.issuance_batches
+     where created_by = '10000000-0000-0000-0000-000000000003'
+     order by created_at desc limit 1),
+    1,
+    'duplicate issuance submit does not increment batch progress twice'
+);
+select is(
+    public.persist_issuance_row(
+        '10000000-0000-0000-0000-000000000003',
+        (select id from public.issuance_batches where organization_id = '20000000-0000-0000-0000-000000000001' and created_by = '10000000-0000-0000-0000-000000000003' order by created_at desc limit 1),
+        1, '{"email":"new@test.invalid"}'::jsonb, 'issuer-row-unique',
+        'New Recipient', 'new@test.invalid', 'hash-new', 'salt-new', 'skip',
+        '81000000-0000-0000-0000-000000000001', now(), null,
+        'unlisted', '{}'::jsonb, 'issuer-test-jws', 'key-a', 'hash-content', null
+    )->>'outcome',
+    'replayed',
+    'duplicate issuance submit replays the prior successful row'
+);
+select is(
+    (select count(*)::int from public.issuance_rows where idempotency_key = 'issuer-row-unique'),
+    1,
+    'duplicate issuance submit does not create another row'
+);
+select is(
+    (select processed_count from public.issuance_batches
+     where created_by = '10000000-0000-0000-0000-000000000003'
+     order by created_at desc limit 1),
+    1,
+    'duplicate issuance submit does not increment batch progress twice'
 );
 insert into public.email_events (organization_id, credential_id, type, payload)
 values (
@@ -1149,6 +1232,10 @@ select is(
 );
 reset role;
 
+update public.recipients
+set external_id = 'NIM-NEW-001'
+where email = 'new@test.invalid';
+
 set local role service_role;
 set local request.jwt.claims = '{"role":"service_role"}';
 select lives_ok(
@@ -1167,10 +1254,10 @@ select lives_ok(
 );
 select ok(
     (select full_name is null and email is null and email_hash is null and salt is null
-        and anonymized_at is not null
+        and external_id is null and anonymized_at is not null
      from public.recipients
      where id = (select recipient_id from public.credentials where id = '81000000-0000-0000-0000-000000000001')),
-    'anonymization removes recipient identifiers'
+    'anonymization removes direct and external recipient identifiers'
 );
 select ok(
     (select status = 'revoked' and credential_json is null and jws is null

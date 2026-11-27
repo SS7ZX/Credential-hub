@@ -25,6 +25,11 @@ export class CredentialVerificationError extends Error {
 
 export type VerificationCheck = { name: string; passed: boolean; detail: string };
 
+export function requireKnownSigningKey<T>(keyRecord: T | null): T {
+  if (keyRecord === null) throw new CredentialVerificationError("Unknown signing key");
+  return keyRecord;
+}
+
 export function parseVcJwtHeader(jwsInput: string): {
   alg: typeof supportedAlgorithms[number];
   kid: string;
@@ -59,6 +64,25 @@ export function parseVcJwtHeader(jwsInput: string): {
   return { alg: record.alg as typeof supportedAlgorithms[number], kid: record.kid };
 }
 
+export async function verifyCredentialProof(
+  jws: string,
+  jwk: JWK,
+  algorithm: typeof supportedAlgorithms[number],
+  expectedKid: string,
+): Promise<JWTVerifyResult> {
+  const key = await importJWK(jwk, algorithm);
+  let result: JWTVerifyResult;
+  try {
+    result = await jwtVerify(jws, key, { algorithms: [algorithm] });
+  } catch {
+    throw new CredentialVerificationError("Credential signature is invalid");
+  }
+  if (result.protectedHeader.typ !== "vc+jwt" || result.protectedHeader.kid !== expectedKid) {
+    throw new CredentialVerificationError("Invalid VC-JWT protected header");
+  }
+  return result;
+}
+
 export async function verifyCredentialJwt(jwsInput: string): Promise<{
   credential: Record<string, unknown>;
   checks: VerificationCheck[];
@@ -74,25 +98,20 @@ export async function verifyCredentialJwt(jwsInput: string): Promise<{
     .eq("kid", header.kid)
     .maybeSingle();
   if (keyError) throw new Error("Could not resolve credential signing key");
-  if (!keyRecord) throw new CredentialVerificationError("Unknown signing key");
-  if (keyRecord.algorithm !== header.alg) {
+  const knownKey = requireKnownSigningKey(keyRecord);
+  if (knownKey.algorithm !== header.alg) {
     throw new CredentialVerificationError("Signing algorithm does not match key record");
   }
-  if (!supportedAlgorithms.includes(keyRecord.algorithm as typeof supportedAlgorithms[number])) {
+  if (!supportedAlgorithms.includes(knownKey.algorithm as typeof supportedAlgorithms[number])) {
     throw new Error("Issuer key has an unsupported signing algorithm");
   }
 
-  const jwk = keyRecord.public_jwk as JWK;
-  const key = await importJWK(jwk, keyRecord.algorithm);
-  let result: JWTVerifyResult;
-  try {
-    result = await jwtVerify(jws, key, { algorithms: [keyRecord.algorithm] });
-  } catch {
-    throw new CredentialVerificationError("Credential signature is invalid");
-  }
-  if (result.protectedHeader.typ !== "vc+jwt" || result.protectedHeader.kid !== header.kid) {
-    throw new CredentialVerificationError("Invalid VC-JWT protected header");
-  }
+  const result = await verifyCredentialProof(
+    jws,
+    knownKey.public_jwk as JWK,
+    knownKey.algorithm,
+    header.kid,
+  );
 
   const credential = result.payload as Record<string, unknown>;
   try {
@@ -131,7 +150,7 @@ export async function verifyCredentialJwt(jwsInput: string): Promise<{
   if (!credentialRow) throw new CredentialVerificationError("Credential is not registered");
   if (
     credentialRow.kid !== header.kid ||
-    credentialRow.organization_id !== keyRecord.organization_id
+    credentialRow.organization_id !== knownKey.organization_id
   ) {
     throw new CredentialVerificationError("Credential does not match its registered signing key");
   }

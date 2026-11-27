@@ -7,6 +7,7 @@ import {
 } from "../_shared/http.ts";
 import { createOpaqueToken, hashOpaqueToken } from "../_shared/recipient-access.ts";
 import { getAdminClient, requireOrganizationRole } from "../_shared/supabase.ts";
+import { submitResendEmail } from "../_shared/resend-provider.ts";
 
 const credentialRequestSchema = z.object({
   organizationId: z.string().uuid(),
@@ -145,57 +146,24 @@ async function sendInvitationEmail(
     : invitation.email;
   if (!targetEmail) throw new Error("Email recipient is unavailable");
 
-  let response: Response;
-  let responseText: string;
-  try {
-    response = await fetch("https://api.resend.com/emails", {
-      method: "POST",
-      headers: {
-        authorization: `Bearer ${configuration.apiKey}`,
-        "content-type": "application/json",
-        "Idempotency-Key": reservationId,
-      },
-      body: JSON.stringify({
-        from: configuration.from,
-        to: [targetEmail],
-        subject: `Invitation to join ${invitation.organizationName} on your credential portal`,
-        text: `You have been invited to join ${invitation.organizationName} as ${invitation.role}. Accept the invitation using this secure link: ${actionLink}`,
-        html: `<p>You have been invited to join <strong>${escapeHtml(invitation.organizationName)}</strong> as ${escapeHtml(invitation.role)}.</p><p><a href="${escapeHtml(actionLink)}">Accept your invitation</a></p><p>This link confirms the invited email address and expires according to the authentication provider's link policy. Organization invitations expire in seven days.</p>`,
-      }),
-    });
-    responseText = await response.text();
-  } catch {
-    await completeEmailAttempt(
-      admin,
-      reservationId,
-      null,
-      "failed",
-      "Email provider request failed",
-      configuration.sandbox,
-    );
-    return { sent: 0, failed: 1, throttled: 0 };
-  }
-
-  let providerResponse: { id?: string; message?: string } = {};
-  if (responseText) {
-    try {
-      providerResponse = JSON.parse(responseText) as typeof providerResponse;
-    } catch {
-      providerResponse = { message: "Email provider returned an unreadable response" };
-    }
-  }
-  const status = response.ok ? "sent" : "failed";
+  const submission = await submitResendEmail(configuration.apiKey, reservationId, {
+    from: configuration.from,
+    to: [targetEmail],
+    subject: `Invitation to join ${invitation.organizationName} on your credential portal`,
+    text: `You have been invited to join ${invitation.organizationName} as ${invitation.role}. Accept the invitation using this secure link: ${actionLink}`,
+    html: `<p>You have been invited to join <strong>${escapeHtml(invitation.organizationName)}</strong> as ${escapeHtml(invitation.role)}.</p><p><a href="${escapeHtml(actionLink)}">Accept your invitation</a></p><p>This link confirms the invited email address and expires according to the authentication provider's link policy. Organization invitations expire in seven days.</p>`,
+  });
   await completeEmailAttempt(
     admin,
     reservationId,
-    providerResponse.id ?? null,
-    status,
-    response.ok ? null : providerResponse.message ?? "Email provider rejected the request",
+    submission.providerId,
+    submission.accepted ? "sent" : "failed",
+    submission.accepted ? null : submission.detail ?? "Email provider rejected the request",
     configuration.sandbox,
   );
   return {
-    sent: response.ok ? 1 : 0,
-    failed: response.ok ? 0 : 1,
+    sent: submission.accepted ? 1 : 0,
+    failed: submission.accepted ? 0 : 1,
     throttled: 0,
   };
 }
@@ -316,56 +284,27 @@ Deno.serve(async (request) => {
         ? undefined
         : typeof access.name === "string" ? access.name.trim() : undefined;
       const greeting = recipientName ? `Hello ${escapeHtml(recipientName)},` : "Hello,";
-      let response: Response;
-      let responseText: string;
-      try {
-        response = await fetch("https://api.resend.com/emails", {
-          method: "POST",
-          headers: {
-            authorization: `Bearer ${apiKey}`,
-            "content-type": "application/json",
-            "Idempotency-Key": reservationId,
-          },
-          body: JSON.stringify({
-            from,
-            to: [targetEmail],
-            subject: "Your digital credential",
-            text: `${recipientName ? `Hello ${recipientName},\n\n` : "Hello,\n\n"}Your digital credential is ready to view and share: ${shareUrl}\n\nManage its visibility using this one-time link (expires in 30 minutes): ${manageUrl}`,
-            html: `<p>${greeting}</p><p>Your digital credential is ready to view and share.</p><p><a href="${escapeHtml(shareUrl)}">View your credential</a></p><p><a href="${escapeHtml(manageUrl)}">Manage credential visibility</a> (one-time link, expires in 30 minutes)</p>`,
-          }),
-        });
-        responseText = await response.text();
-      } catch {
-        const { error: completionError } = await admin.rpc("complete_email_send", {
-          p_attempt_id: reservationId,
-          p_provider_id: null,
-          p_status: "failed",
-          p_detail: "Email provider request failed",
-          p_sandbox: sandbox,
-        });
-        if (completionError) throw new Error("Could not record the failed email attempt");
-        results.push({ credentialId, status: "failed", detail: "Email provider request failed" });
-        continue;
-      }
-      let providerResponse: { id?: string; message?: string } = {};
-      if (responseText) {
-        try {
-          providerResponse = JSON.parse(responseText) as typeof providerResponse;
-        } catch {
-          providerResponse = { message: "Email provider returned an unreadable response" };
-        }
-      }
-      const status = response.ok ? "sent" : "failed";
-      const detail = response.ok ? undefined : providerResponse.message ?? "Email provider rejected the request";
+      const submission = await submitResendEmail(apiKey, reservationId, {
+        from,
+        to: [targetEmail],
+        subject: "Your digital credential",
+        text: `${recipientName ? `Hello ${recipientName},\n\n` : "Hello,\n\n"}Your digital credential is ready to view and share: ${shareUrl}\n\nManage its visibility using this one-time link (expires in 30 minutes): ${manageUrl}`,
+        html: `<p>${greeting}</p><p>Your digital credential is ready to view and share.</p><p><a href="${escapeHtml(shareUrl)}">View your credential</a></p><p><a href="${escapeHtml(manageUrl)}">Manage credential visibility</a> (one-time link, expires in 30 minutes)</p>`,
+      });
+      const detail = submission.accepted ? undefined : submission.detail ?? "Email provider rejected the request";
       const { error: completionError } = await admin.rpc("complete_email_send", {
         p_attempt_id: reservationId,
-        p_provider_id: providerResponse.id ?? null,
-        p_status: status,
+        p_provider_id: submission.providerId,
+        p_status: submission.accepted ? "sent" : "failed",
         p_detail: detail ?? null,
         p_sandbox: sandbox,
       });
       if (completionError) throw new Error("Email was attempted but its audit event could not be saved");
-      results.push({ credentialId, status, ...(detail ? { detail } : {}) });
+      results.push({
+        credentialId,
+        status: submission.accepted ? "sent" : "failed",
+        ...(detail ? { detail } : {}),
+      });
     }
 
     return jsonResponse({
